@@ -41,24 +41,74 @@ export default function BudgetApp() {
   const [password, setPassword] = useState("");
 
   async function loadData(userId) {
-    setLoading(true);
-    const { data: hm } = await supabase.from("household_members").select("household_id, role").eq("user_id", userId).maybeSingle();
-    if (!hm) { setLoading(false); return; }
-    const h = await supabase.from("households").select("*").eq("id", hm.household_id).single();
-    const p = await supabase.from("profiles").select("*").eq("id", userId).single();
-    const [cats, tx, rec, mem] = await Promise.all([
-      supabase.from("categories").select("*").eq("household_id", hm.household_id).eq("is_active", true).order("name"),
-      supabase.from("transactions").select("*").eq("household_id", hm.household_id).order("transaction_date", { ascending: false }),
-      supabase.from("recurring_expenses").select("*").eq("household_id", hm.household_id).eq("is_active", true).order("day_of_month"),
-      supabase.from("household_members").select("user_id, role, profiles(display_name)").eq("household_id", hm.household_id)
-    ]);
-    setHousehold(h.data);
-    setProfile(p.data);
-    setCategories(cats.data || []);
-    setTransactions(tx.data || []);
-    setRecurring(rec.data || []);
-    setMembers(mem.data || []);
+  setLoading(true);
+
+  const { data: hm, error: hmError } = await supabase
+    .from("household_members")
+    .select("household_id, role")
+    .eq("user_id", userId)
+    .maybeSingle();
+
+  if (hmError) {
+    alert("שגיאה בטעינת המשפחה: " + hmError.message);
     setLoading(false);
+    return;
+  }
+
+  if (!hm) {
+    alert("המשתמש לא משויך למשפחה.");
+    setLoading(false);
+    return;
+  }
+
+  const { data: h } = await supabase
+    .from("households")
+    .select("*")
+    .eq("id", hm.household_id)
+    .single();
+
+  const { data: p } = await supabase
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
+    .single();
+
+  const { data: cats, error: catsError } = await supabase
+    .from("categories")
+    .select("*")
+    .eq("household_id", hm.household_id)
+    .eq("is_active", true)
+    .order("name");
+
+  const { data: tx } = await supabase
+    .from("transactions")
+    .select("*")
+    .eq("household_id", hm.household_id)
+    .order("transaction_date", { ascending: false });
+
+  const { data: rec } = await supabase
+    .from("recurring_expenses")
+    .select("*")
+    .eq("household_id", hm.household_id)
+    .eq("is_active", true)
+    .order("day_of_month");
+
+  const { data: mem } = await supabase
+    .from("household_members")
+    .select("user_id, role")
+    .eq("household_id", hm.household_id);
+
+  if (catsError) {
+    alert("שגיאה בטעינת הקטגוריות: " + catsError.message);
+  }
+
+  setHousehold(h);
+  setProfile(p);
+  setCategories(cats || []);
+  setTransactions(tx || []);
+  setRecurring(rec || []);
+  setMembers(mem || []);
+  setLoading(false);
   }
 
   useEffect(() => {
