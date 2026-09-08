@@ -1,10 +1,14 @@
- "use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 const money = (n) =>
-  new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 0 }).format(Number(n || 0));
+  new Intl.NumberFormat("he-IL", {
+    style: "currency",
+    currency: "ILS",
+    maximumFractionDigits: 0,
+  }).format(Number(n || 0));
 
 const monthKey = (d = new Date()) => {
   const x = new Date(d);
@@ -15,7 +19,10 @@ function Modal({ title, children, onClose }) {
   return (
     <div className="modalBackdrop" onMouseDown={onClose}>
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
-        <div className="modalHead"><h2>{title}</h2><button className="iconBtn" onClick={onClose}>×</button></div>
+        <div className="modalHead">
+          <h2>{title}</h2>
+          <button className="iconBtn" onClick={onClose}>×</button>
+        </div>
         {children}
       </div>
     </div>
@@ -41,266 +48,96 @@ export default function BudgetApp() {
   const [password, setPassword] = useState("");
 
   async function loadData(userId) {
-  setLoading(true);
+    setLoading(true);
 
-  const { data: hm, error: hmError } = await supabase
-    .from("household_members")
-    .select("household_id, role")
-    .eq("user_id", userId)
-    .maybeSingle();
+    const { data: hm, error: hmError } = await supabase
+      .from("household_members")
+      .select("household_id, role")
+      .eq("user_id", userId)
+      .maybeSingle();
 
-  if (hmError) {
-    alert("שגיאה בטעינת המשפחה: " + hmError.message);
-    setLoading(false);
-    return;
-  }
+    if (hmError) {
+      alert("שגיאה בטעינת המשפחה: " + hmError.message);
+      setLoading(false);
+      return;
+    }
 
-  if (!hm) {
-    alert("המשתמש לא משויך למשפחה.");
-    setLoading(false);
-    return;
-  }
+    if (!hm) {
+      alert("המשתמש לא משויך למשפחה.");
+      setLoading(false);
+      return;
+    }
 
-  const { data: h } = await supabase
-    .from("households")
-    .select("*")
-    .eq("id", hm.household_id)
-    .single();
+    const { data: h, error: hError } = await supabase
+      .from("households")
+      .select("*")
+      .eq("id", hm.household_id)
+      .single();
 
-  const { data: p } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", userId)
-    .single();
+    if (hError) {
+      alert("שגיאה בטעינת המשפחה: " + hError.message);
+      setLoading(false);
+      return;
+    }
 
-  const { data: cats, error: catsError } = await supabase
-    .from("categories")
-    .select("*")
-    .eq("household_id", hm.household_id)
-    .eq("is_active", true)
-    .order("name");
+    const { data: p, error: pError } = await supabase
+      .from("profiles")
+      .select("*")
+      .eq("id", userId)
+      .single();
 
-  const { data: tx } = await supabase
-    .from("transactions")
-    .select("*")
-    .eq("household_id", hm.household_id)
-    .order("transaction_date", { ascending: false });
+    if (pError) {
+      alert("שגיאה בטעינת הפרופיל: " + pError.message);
+    }
 
-  const { data: rec } = await supabase
-    .from("recurring_expenses")
-    .select("*")
-    .eq("household_id", hm.household_id)
-    .eq("is_active", true)
-    .order("day_of_month");
+    const { data: cats, error: catsError } = await supabase
+      .from("categories")
+      .select("*")
+      .eq("household_id", hm.household_id)
+      .eq("is_active", true)
+      .order("name");
 
-  const { data: mem } = await supabase
-    .from("household_members")
-    .select("user_id, role")
-    .eq("household_id", hm.household_id);
+    if (catsError) {
+      alert("שגיאה בטעינת הקטגוריות: " + catsError.message);
+    }
 
-  if (catsError) {
-    alert("שגיאה בטעינת הקטגוריות: " + catsError.message);
-  }
+    const { data: tx, error: txError } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("household_id", hm.household_id)
+      .order("transaction_date", { ascending: false });
 
-  setHousehold(h);
-  setProfile(p);
-  setCategories(cats || []);
-  setTransactions(tx || []);
-  setRecurring(rec || []);
-  setMembers(mem || []);
-  setLoading(false);
-  }
+    if (txError) {
+      alert("שגיאה בטעינת התנועות: " + txError.message);
+    }
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      if (data.session?.user) loadData(data.session.user.id);
-      else setLoading(false);
-    });
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
-      if (s?.user) loadData(s.user.id);
-      else { setProfile(null); setHousehold(null); setTransactions([]); }
-    });
-    return () => sub.subscription.unsubscribe();
-  }, []);
+    const { data: rec, error: recError } = await supabase
+      .from("recurring_expenses")
+      .select("*")
+      .eq("household_id", hm.household_id)
+      .eq("is_active", true)
+      .order("day_of_month");
 
-  async function login(e) {
-    e.preventDefault();
-    setAuthError("");
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) setAuthError("פרטי הכניסה לא נכונים.");
-  }
+    if (recError) {
+      alert("שגיאה בטעינת ההוצאות הקבועות: " + recError.message);
+    }
 
-  async function logout() { await supabase.auth.signOut(); }
+    const { data: mem, error: memError } = await supabase
+      .from("household_members")
+      .select("user_id, role")
+      .eq("household_id", hm.household_id);
 
-  const currentTx = useMemo(() => transactions.filter(t => String(t.transaction_date || "").startsWith(month)), [transactions, month]);
-  const income = currentTx.filter(t => t.kind === "income").reduce((s,t) => s + Number(t.actual_amount ?? t.planned_amount ?? 0), 0);
-  const expenses = currentTx.filter(t => t.kind === "expense").reduce((s,t) => s + Number(t.actual_amount ?? t.planned_amount ?? 0), 0);
-  const plannedExpenses = currentTx.filter(t => t.kind === "expense").reduce((s,t) => s + Number(t.planned_amount || 0), 0);
-  const fixedExpenses = currentTx.filter(t => t.kind === "expense" && t.expense_type === "fixed").reduce((s,t) => s + Number(t.actual_amount ?? t.planned_amount ?? 0), 0);
-  const variableExpenses = expenses - fixedExpenses;
-  const balance = income - expenses;
+    if (memError) {
+      alert("שגיאה בטעינת בני המשפחה: " + memError.message);
+    }
 
-  async function refresh() { if (session?.user) await loadData(session.user.id); }
+    const { data: profs, error: profsError } = await supabase
+      .from("profiles")
+      .select("id, display_name");
 
-  async function saveTransaction(e) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const kind = f.get("kind");
-    const row = {
-      household_id: household.id,
-      kind,
-      description: f.get("description"),
-      category_id: f.get("category_id") || null,
-      transaction_date: f.get("transaction_date"),
-      planned_amount: Number(f.get("planned_amount") || 0),
-      completed: f.get("completed") === "on",
-      actual_amount: f.get("actual_amount") ? Number(f.get("actual_amount")) : null,
-      expense_type: kind === "expense" ? f.get("expense_type") : null,
-      person_user_id: f.get("person_user_id") || null,
-      note: f.get("note") || null,
-      created_by: session.user.id
-    };
-    const { error } = await supabase.from("transactions").insert(row);
-    if (error) alert("לא הצלחתי לשמור. " + error.message);
-    else { setModal(null); await refresh(); }
-  }
+    if (profsError) {
+      alert("שגיאה בטעינת שמות בני המשפחה: " + profsError.message);
+    }
 
-  async function saveRecurring(e) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const row = {
-      household_id: household.id,
-      name: f.get("name"),
-      category_id: f.get("category_id") || null,
-      planned_amount: Number(f.get("planned_amount") || 0),
-      day_of_month: Number(f.get("day_of_month") || 1),
-      person_user_id: f.get("person_user_id") || null,
-      is_active: true,
-      note: f.get("note") || null
-    };
-    const { error } = await supabase.from("recurring_expenses").insert(row);
-    if (error) alert("לא הצלחתי לשמור. " + error.message);
-    else { setModal(null); await refresh(); }
-  }
-
-  async function saveCategory(e) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    const { error } = await supabase.from("categories").insert({
-      household_id: household.id,
-      name: f.get("name"),
-      kind: f.get("kind"),
-      is_active: true
-    });
-    if (error) alert("לא הצלחתי להוסיף קטגוריה. " + error.message);
-    else { setModal(null); await refresh(); }
-  }
-
-  if (!session) return (
-    <main className="auth">
-      <div className="authCard">
-        <div className="brandMark">₪</div>
-        <h1>Kario's budget</h1>
-        <p>התקציב המשפחתי המשותף שלכם</p>
-        <form onSubmit={login} className="form">
-          <label>אימייל<input type="email" value={email} onChange={e=>setEmail(e.target.value)} required /></label>
-          <label>סיסמה<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required /></label>
-          {authError && <div className="error">{authError}</div>}
-          <button className="primary" type="submit">כניסה</button>
-        </form>
-      </div>
-    </main>
-  );
-
-  if (loading) return <main className="loading">טוען את התקציב…</main>;
-
-  return (
-    <main className="shell">
-      <header className="topbar">
-        <div><div className="title">Kario's budget</div><div className="subtitle">{profile?.display_name || "משפחה"} · {household?.name || "תקציב משותף"}</div></div>
-        <button className="ghost" onClick={logout}>יציאה</button>
-      </header>
-
-      <nav className="tabs">
-        {[
-          ["dashboard","סקירה"],
-          ["transactions","תנועות"],
-          ["fixed","הוצאות קבועות"],
-          ["categories","קטגוריות"]
-        ].map(([id,label]) => <button key={id} className={tab===id?"tab active":"tab"} onClick={()=>setTab(id)}>{label}</button>)}
-      </nav>
-
-      <section className="content">
-        {tab==="dashboard" && <>
-          <div className="monthBar">
-            <button onClick={()=>{const d=new Date(month+"-15"); d.setMonth(d.getMonth()-1); setMonth(monthKey(d));}}>‹</button>
-            <strong>{new Date(month+"-15").toLocaleDateString("he-IL",{month:"long",year:"numeric"})}</strong>
-            <button onClick={()=>{const d=new Date(month+"-15"); d.setMonth(d.getMonth()+1); setMonth(monthKey(d));}}>›</button>
-          </div>
-          <div className="cards">
-            <div className="card income"><span>הכנסות בפועל</span><b>{money(income)}</b></div>
-            <div className="card expense"><span>הוצאות בפועל</span><b>{money(expenses)}</b></div>
-            <div className="card"><span>מתוכנן להוצאות</span><b>{money(plannedExpenses)}</b></div>
-            <div className={balance>=0?"card balance":"card balance negative"}><span>יתרה</span><b>{money(balance)}</b></div>
-          </div>
-          <div className="split">
-            <div className="panel"><h2>הוצאות קבועות מול משתנות</h2><div className="bigStat">{money(fixedExpenses)}</div><div className="muted">קבועות</div><div className="bar"><span style={{width: expenses ? `${Math.min(100,fixedExpenses/expenses*100)}%` : "0%"}} /></div><div className="row"><span>משתנות</span><b>{money(variableExpenses)}</b></div></div>
-            <div className="panel"><h2>הוצאות קבועות קרובות</h2>{recurring.length===0?<p className="muted">עדיין לא הוזנו הוצאות קבועות.</p>:recurring.slice(0,6).map(r=><div className="listRow" key={r.id}><div><b>{r.name}</b><small>כל חודש · יום {r.day_of_month}</small></div><b>{money(r.planned_amount)}</b></div>)}</div>
-          </div>
-        </>}
-
-        {tab==="transactions" && <div className="panel">
-          <div className="panelHead"><h2>תנועות</h2><button className="primary small" onClick={()=>setModal("transaction")}>+ הוספת תנועה</button></div>
-          <div className="filters"><input type="month" value={month} onChange={e=>setMonth(e.target.value)} /></div>
-          <div className="txList">{currentTx.length===0?<p className="muted">אין תנועות בחודש הזה.</p>:currentTx.map(t=><div className="tx" key={t.id}><div><b>{t.description}</b><small>{t.transaction_date} · {categories.find(c=>c.id===t.category_id)?.name || "ללא קטגוריה"}{t.expense_type ? " · "+(t.expense_type==="fixed"?"קבועה":"משתנה") : ""}</small></div><strong className={t.kind==="income"?"positive":"negative"}>{t.kind==="income"?"+":"−"} {money(t.actual_amount ?? t.planned_amount)}</strong></div>)}</div>
-        </div>}
-
-        {tab==="fixed" && <div className="panel">
-          <div className="panelHead"><h2>הוצאות קבועות</h2><button className="primary small" onClick={()=>setModal("recurring")}>+ הוצאה קבועה</button></div>
-          {recurring.length===0?<p className="muted">אין הוצאות קבועות עדיין.</p>:<div>{recurring.map(r=><div className="listRow" key={r.id}><div><b>{r.name}</b><small>יום {r.day_of_month} · {categories.find(c=>c.id===r.category_id)?.name || "ללא קטגוריה"}</small></div><b>{money(r.planned_amount)}</b></div>)}</div>}
-        </div>}
-
-        {tab==="categories" && <div className="panel">
-          <div className="panelHead"><h2>קטגוריות</h2><button className="primary small" onClick={()=>setModal("category")}>+ קטגוריה</button></div>
-          <div className="categoryGrid">{categories.map(c=><div className="category" key={c.id}><span>{c.name}</span><small>{c.kind==="income"?"הכנסה":c.kind==="expense"?"הוצאה":"שניהם"}</small></div>)}</div>
-        </div>}
-      </section>
-
-      {modal==="transaction" && <Modal title="הוספת תנועה" onClose={()=>setModal(null)}>
-        <form className="form" onSubmit={saveTransaction}>
-          <label>סוג<select name="kind" value={transactionKind} onChange={e=>setTransactionKind(e.target.value)}><option value="expense">הוצאה</option><option value="income">הכנסה</option></select></label>
-          <label>תיאור<input name="description" placeholder="למשל: סופר / משכורת" required /></label>
-          <label>קטגוריה<select name="category_id" required><option value="">בחרי קטגוריה</option>{categories.filter(c=>c.kind===transactionKind || c.kind==="both").map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-          <div className="two"><label>תאריך<input name="transaction_date" type="date" defaultValue={new Date().toISOString().slice(0,10)} required /></label><label>סכום מתוכנן<input name="planned_amount" type="number" min="0" step="0.01" required /></label></div>
-          <label>סכום בפועל (אם שונה)<input name="actual_amount" type="number" min="0" step="0.01" /></label>
-          {transactionKind === "expense" && <label>סוג הוצאה<select name="expense_type" defaultValue="variable"><option value="variable">משתנה</option><option value="fixed">קבועה</option></select></label>}
-          <label>מי שילם/קיבל<select name="person_user_id"><option value="">לא צוין</option>{members.map(m=><option key={m.user_id} value={m.user_id}>{m.profiles?.display_name || "משתמש"}</option>)}</select></label>
-          <label className="check"><input name="completed" type="checkbox" defaultChecked /> בוצע / חויב בפועל</label>
-          <label>הערה<textarea name="note" rows="3" /></label>
-          <button className="primary" type="submit">שמירה</button>
-        </form>
-      </Modal>}
-
-      {modal==="recurring" && <Modal title="הוספת הוצאה קבועה" onClose={()=>setModal(null)}>
-        <form className="form" onSubmit={saveRecurring}>
-          <label>שם ההוצאה<input name="name" placeholder="למשל: משכנתא" required /></label>
-          <label>קטגוריה<select name="category_id"><option value="">ללא קטגוריה</option>{categories.filter(c=>c.kind!=="income").map(c=><option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
-          <div className="two"><label>סכום מתוכנן<input name="planned_amount" type="number" min="0" step="0.01" required /></label><label>יום בחודש<input name="day_of_month" type="number" min="1" max="31" defaultValue="1" required /></label></div>
-          <label>מי אחראי<select name="person_user_id"><option value="">לא צוין</option>{members.map(m=><option key={m.user_id} value={m.user_id}>{m.profiles?.display_name || "משתמש"}</option>)}</select></label>
-          <label>הערה<textarea name="note" rows="3" /></label>
-          <button className="primary" type="submit">שמירה</button>
-        </form>
-      </Modal>}
-
-      {modal==="category" && <Modal title="קטגוריה חדשה" onClose={()=>setModal(null)}>
-        <form className="form" onSubmit={saveCategory}>
-          <label>שם הקטגוריה<input name="name" required placeholder="למשל: חופשות" /></label>
-          <label>סוג<select name="kind" defaultValue="expense"><option value="expense">הוצאה</option><option value="income">הכנסה</option><option value="both">שניהם</option></select></label>
-          <button className="primary" type="submit">הוספה</button>
-        </form>
-      </Modal>}
-    </main>
-  );
-}
+    const membersWithProfiles = (mem || []).map((m) => ({
+      ...
