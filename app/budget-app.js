@@ -211,8 +211,9 @@ export default function BudgetApp() {
   }
 
   async function saveTransaction(e) {
-    e.preventDefault();
+  alert("הגענו לשמירה");
 
+  e.preventDefault();
     try {
       const f = new FormData(e.currentTarget);
       const kind = f.get("kind");
