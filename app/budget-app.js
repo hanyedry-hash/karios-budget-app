@@ -215,7 +215,7 @@ const h = {
   }
 
   async function saveTransaction(e) {
-  alert("הגענו לשמירה");
+  
 
   e.preventDefault();
     try {
