@@ -21,7 +21,7 @@ function Modal({ title, children, onClose }) {
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modalHead">
           <h2>{title}</h2>
-          <button className="iconBtn" onClick={onClose}>
+          <button className="iconBtn" type="button" onClick={onClose}>
             ×
           </button>
         </div>
@@ -45,6 +45,7 @@ export default function BudgetApp() {
   const [authError, setAuthError] = useState("");
   const [modal, setModal] = useState(null);
   const [transactionKind, setTransactionKind] = useState("expense");
+  const [editingRecurring, setEditingRecurring] = useState(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -64,14 +65,15 @@ export default function BudgetApp() {
     }
 
     const { data: householdRows } = await supabase.rpc("get_my_household");
-const h = {
-  data: householdRows?.[0]
-    ? {
-        id: householdRows[0].household_id,
-        name: householdRows[0].household_name
-      }
-    : null
-};
+
+    const h = {
+      data: householdRows?.[0]
+        ? {
+            id: householdRows[0].household_id,
+            name: householdRows[0].household_name,
+          }
+        : null,
+    };
 
     const p = await supabase
       .from("profiles")
@@ -79,7 +81,7 @@ const h = {
       .eq("id", userId)
       .single();
 
-    const [cats, tx, rec, memberResult] = await Promise.all([
+    const [cats, tx, rec] = await Promise.all([
       supabase
         .from("categories")
         .select("*")
@@ -99,17 +101,13 @@ const h = {
         .eq("household_id", hm.household_id)
         .eq("is_active", true)
         .order("day_of_month"),
-
-      supabase.rpc("get_my_household_members"),
     ]);
 
-    setHousehold(h.data);
-    setProfile(p.data);
-    setCategories(cats.data || []);
-    setTransactions(tx.data || []);
-    setRecurring(rec.data || []);
+    const { data: householdMembers } = await supabase.rpc(
+      "get_my_household_members"
+    );
 
-    const membersWithProfiles = (memberResult.data || []).map((member) => ({
+    const membersWithProfiles = (householdMembers || []).map((member) => ({
       user_id: member.user_id,
       role: member.role,
       profiles: {
@@ -117,8 +115,12 @@ const h = {
       },
     }));
 
+    setHousehold(h.data);
+    setProfile(p.data);
+    setCategories(cats.data || []);
+    setTransactions(tx.data || []);
+    setRecurring(rec.data || []);
     setMembers(membersWithProfiles);
-
     setLoading(false);
   }
 
@@ -133,9 +135,7 @@ const h = {
       }
     });
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
       setSession(s);
 
       if (s?.user) {
@@ -145,11 +145,10 @@ const h = {
         setHousehold(null);
         setTransactions([]);
         setRecurring([]);
-        setMembers([]);
       }
     });
 
-    return () => subscription.unsubscribe();
+    return () => sub.subscription.unsubscribe();
   }, []);
 
   async function login(e) {
@@ -215,147 +214,161 @@ const h = {
   }
 
   async function saveTransaction(e) {
-  
+    e.preventDefault();
 
-  e.preventDefault();
-    try {
-      const f = new FormData(e.currentTarget);
-      const kind = f.get("kind");
+    if (!household?.id || !session?.user?.id) {
+      alert("לא נמצא משק הבית או המשתמש המחובר.");
+      return;
+    }
 
-      if (!household?.id) {
-        alert("שגיאה: לא נמצא משק הבית.");
-        return;
-      }
+    const f = new FormData(e.currentTarget);
+    const kind = f.get("kind");
 
-      if (!session?.user?.id) {
-        alert("שגיאה: המשתמש לא מחובר.");
-        return;
-      }
+    const cardLast4Raw = String(
+      f.get("credit_card_last4") || ""
+    )
+      .replace(/\D/g, "")
+      .slice(-4);
 
-      const row = {
-        household_id: household.id,
-        kind,
-        description: f.get("description"),
-        category_id: f.get("category_id") || null,
-        transaction_date: f.get("transaction_date"),
-        planned_amount: Number(f.get("planned_amount") || 0),
-        completed: f.get("completed") === "on",
-        actual_amount: f.get("actual_amount")
-          ? Number(f.get("actual_amount"))
+    const row = {
+      household_id: household.id,
+      kind,
+      description: f.get("description"),
+      category_id: f.get("category_id") || null,
+      transaction_date: f.get("transaction_date"),
+      planned_amount: Number(f.get("planned_amount") || 0),
+      completed: f.get("completed") === "on",
+      actual_amount: f.get("actual_amount")
+        ? Number(f.get("actual_amount"))
+        : null,
+      expense_type:
+        kind === "expense" ? f.get("expense_type") : null,
+      person_user_id: f.get("person_user_id") || null,
+      credit_card_last4:
+        kind === "expense" && cardLast4Raw.length === 4
+          ? cardLast4Raw
           : null,
-        expense_type:
-          kind === "expense"
-            ? f.get("expense_type")
-            : null,
-        person_user_id:
-          f.get("person_user_id") || null,
-        note: f.get("note") || null,
-        created_by: session.user.id,
-      };
+      note: f.get("note") || null,
+      created_by: session.user.id,
+    };
 
-      console.log("Saving transaction:", row);
+    const { error } = await supabase
+      .from("transactions")
+      .insert(row);
 
-      const { data, error } = await supabase
-        .from("transactions")
-        .insert(row)
-        .select();
-
-      if (error) {
-        console.error("Supabase transaction error:", error);
-        alert("שגיאה בשמירה:\n" + error.message);
-        return;
-      }
-
-      console.log("Transaction saved:", data);
-
+    if (error) {
+      alert("לא הצלחתי לשמור. " + error.message);
+    } else {
       setModal(null);
       await refresh();
-    } catch (error) {
-      console.error("Unexpected save error:", error);
-
-      alert(
-        "שגיאה לא צפויה:\n" +
-          (error?.message || String(error))
-      );
     }
+  }
+
+  function openNewRecurring() {
+    setEditingRecurring(null);
+    setModal("recurring");
+  }
+
+  function openEditRecurring(item) {
+    setEditingRecurring(item);
+    setModal("recurring");
   }
 
   async function saveRecurring(e) {
     e.preventDefault();
 
-    try {
-      const f = new FormData(e.currentTarget);
+    if (!household?.id) {
+      alert("לא נמצא משק הבית.");
+      return;
+    }
 
-      if (!household?.id) {
-        alert("שגיאה: לא נמצא משק הבית.");
-        return;
-      }
+    const f = new FormData(e.currentTarget);
 
-      const row = {
-        household_id: household.id,
-        name: f.get("name"),
-        category_id: f.get("category_id") || null,
-        planned_amount: Number(f.get("planned_amount") || 0),
-        day_of_month: Number(f.get("day_of_month") || 1),
-        person_user_id: f.get("person_user_id") || null,
-        is_active: true,
-        note: f.get("note") || null,
-      };
+    const row = {
+      household_id: household.id,
+      name: f.get("name"),
+      category_id: f.get("category_id") || null,
+      planned_amount: Number(f.get("planned_amount") || 0),
+      day_of_month: Number(f.get("day_of_month") || 1),
+      person_user_id: f.get("person_user_id") || null,
+      is_active: true,
+      note: f.get("note") || null,
+    };
 
-      const { error } = await supabase
+    let result;
+
+    if (editingRecurring?.id) {
+      result = await supabase
+        .from("recurring_expenses")
+        .update(row)
+        .eq("id", editingRecurring.id)
+        .eq("household_id", household.id);
+    } else {
+      result = await supabase
         .from("recurring_expenses")
         .insert(row);
+    }
 
-      if (error) {
-        alert("לא הצלחתי לשמור. " + error.message);
-        return;
-      }
-
+    if (result.error) {
+      alert("לא הצלחתי לשמור. " + result.error.message);
+    } else {
+      setEditingRecurring(null);
       setModal(null);
       await refresh();
-    } catch (error) {
-      alert(
-        "שגיאה לא צפויה:\n" +
-          (error?.message || String(error))
-      );
     }
+  }
+
+  async function deleteRecurring(item) {
+    if (!item?.id || !household?.id) {
+      return;
+    }
+
+    const ok = window.confirm(
+      `למחוק את ההוצאה הקבועה "${item.name}"?`
+    );
+
+    if (!ok) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("recurring_expenses")
+      .update({ is_active: false })
+      .eq("id", item.id)
+      .eq("household_id", household.id);
+
+    if (error) {
+      alert("לא הצלחתי למחוק. " + error.message);
+      return;
+    }
+
+    await refresh();
   }
 
   async function saveCategory(e) {
     e.preventDefault();
 
-    try {
-      const f = new FormData(e.currentTarget);
+    if (!household?.id) {
+      alert("לא נמצא משק הבית.");
+      return;
+    }
 
-      if (!household?.id) {
-        alert("שגיאה: לא נמצא משק הבית.");
-        return;
-      }
+    const f = new FormData(e.currentTarget);
 
-      const { error } = await supabase
-        .from("categories")
-        .insert({
-          household_id: household.id,
-          name: f.get("name"),
-          kind: f.get("kind"),
-          is_active: true,
-        });
+    const { error } = await supabase
+      .from("categories")
+      .insert({
+        household_id: household.id,
+        name: f.get("name"),
+        kind: f.get("kind"),
+        is_active: true,
+      });
 
-      if (error) {
-        alert(
-          "לא הצלחתי להוסיף קטגוריה. " +
-            error.message
-        );
-        return;
-      }
-
+    if (error) {
+      alert("לא הצלחתי להוסיף קטגוריה. " + error.message);
+    } else {
       setModal(null);
       await refresh();
-    } catch (error) {
-      alert(
-        "שגיאה לא צפויה:\n" +
-          (error?.message || String(error))
-      );
     }
   }
 
@@ -365,47 +378,36 @@ const h = {
         <div className="authCard">
           <div className="brandMark">₪</div>
 
-          <h1>Kario&apos;s budget</h1>
+          <h1>Kario's budget</h1>
 
           <p>התקציב המשפחתי המשותף שלכם</p>
 
           <form onSubmit={login} className="form">
             <label>
               אימייל
-
               <input
                 type="email"
                 value={email}
-                onChange={(e) =>
-                  setEmail(e.target.value)
-                }
+                onChange={(e) => setEmail(e.target.value)}
                 required
               />
             </label>
 
             <label>
               סיסמה
-
               <input
                 type="password"
                 value={password}
-                onChange={(e) =>
-                  setPassword(e.target.value)
-                }
+                onChange={(e) => setPassword(e.target.value)}
                 required
               />
             </label>
 
             {authError && (
-              <div className="error">
-                {authError}
-              </div>
+              <div className="error">{authError}</div>
             )}
 
-            <button
-              className="primary"
-              type="submit"
-            >
+            <button className="primary" type="submit">
               כניסה
             </button>
           </form>
@@ -427,7 +429,7 @@ const h = {
       <header className="topbar">
         <div>
           <div className="title">
-            Kario&apos;s budget
+            Kario's budget
           </div>
 
           <div className="subtitle">
@@ -438,6 +440,7 @@ const h = {
 
         <button
           className="ghost"
+          type="button"
           onClick={logout}
         >
           יציאה
@@ -454,10 +457,9 @@ const h = {
           <button
             key={id}
             className={
-              tab === id
-                ? "tab active"
-                : "tab"
+              tab === id ? "tab active" : "tab"
             }
+            type="button"
             onClick={() => setTab(id)}
           >
             {label}
@@ -466,19 +468,15 @@ const h = {
       </nav>
 
       <section className="content">
+
         {tab === "dashboard" && (
           <>
             <div className="monthBar">
               <button
+                type="button"
                 onClick={() => {
-                  const d = new Date(
-                    month + "-15"
-                  );
-
-                  d.setMonth(
-                    d.getMonth() - 1
-                  );
-
+                  const d = new Date(month + "-15");
+                  d.setMonth(d.getMonth() - 1);
                   setMonth(monthKey(d));
                 }}
               >
@@ -488,25 +486,17 @@ const h = {
               <strong>
                 {new Date(
                   month + "-15"
-                ).toLocaleDateString(
-                  "he-IL",
-                  {
-                    month: "long",
-                    year: "numeric",
-                  }
-                )}
+                ).toLocaleDateString("he-IL", {
+                  month: "long",
+                  year: "numeric",
+                })}
               </strong>
 
               <button
+                type="button"
                 onClick={() => {
-                  const d = new Date(
-                    month + "-15"
-                  );
-
-                  d.setMonth(
-                    d.getMonth() + 1
-                  );
-
+                  const d = new Date(month + "-15");
+                  d.setMonth(d.getMonth() + 1);
                   setMonth(monthKey(d));
                 }}
               >
@@ -516,29 +506,18 @@ const h = {
 
             <div className="cards">
               <div className="card income">
-                <span>
-                  הכנסות בפועל
-                </span>
-
+                <span>הכנסות בפועל</span>
                 <b>{money(income)}</b>
               </div>
 
               <div className="card expense">
-                <span>
-                  הוצאות בפועל
-                </span>
-
+                <span>הוצאות בפועל</span>
                 <b>{money(expenses)}</b>
               </div>
 
               <div className="card">
-                <span>
-                  מתוכנן להוצאות
-                </span>
-
-                <b>
-                  {money(plannedExpenses)}
-                </b>
+                <span>מתוכנן להוצאות</span>
+                <b>{money(plannedExpenses)}</b>
               </div>
 
               <div
@@ -549,16 +528,13 @@ const h = {
                 }
               >
                 <span>יתרה</span>
-
                 <b>{money(balance)}</b>
               </div>
             </div>
 
             <div className="split">
               <div className="panel">
-                <h2>
-                  הוצאות קבועות מול משתנות
-                </h2>
+                <h2>הוצאות קבועות מול משתנות</h2>
 
                 <div className="bigStat">
                   {money(fixedExpenses)}
@@ -574,8 +550,7 @@ const h = {
                       width: expenses
                         ? `${Math.min(
                             100,
-                            (fixedExpenses /
-                              expenses) *
+                            (fixedExpenses / expenses) *
                               100
                           )}%`
                         : "0%",
@@ -585,22 +560,16 @@ const h = {
 
                 <div className="row">
                   <span>משתנות</span>
-
-                  <b>
-                    {money(variableExpenses)}
-                  </b>
+                  <b>{money(variableExpenses)}</b>
                 </div>
               </div>
 
               <div className="panel">
-                <h2>
-                  הוצאות קבועות קרובות
-                </h2>
+                <h2>הוצאות קבועות קרובות</h2>
 
                 {recurring.length === 0 ? (
                   <p className="muted">
-                    עדיין לא הוזנו הוצאות
-                    קבועות.
+                    עדיין לא הוזנו הוצאות קבועות.
                   </p>
                 ) : (
                   recurring
@@ -612,7 +581,6 @@ const h = {
                       >
                         <div>
                           <b>{r.name}</b>
-
                           <small>
                             כל חודש · יום{" "}
                             {r.day_of_month}
@@ -620,9 +588,7 @@ const h = {
                         </div>
 
                         <b>
-                          {money(
-                            r.planned_amount
-                          )}
+                          {money(r.planned_amount)}
                         </b>
                       </div>
                     ))
@@ -639,9 +605,11 @@ const h = {
 
               <button
                 className="primary small"
-                onClick={() =>
-                  setModal("transaction")
-                }
+                type="button"
+                onClick={() => {
+                  setTransactionKind("expense");
+                  setModal("transaction");
+                }}
               >
                 + הוספת תנועה
               </button>
@@ -669,16 +637,13 @@ const h = {
                     key={t.id}
                   >
                     <div>
-                      <b>
-                        {t.description}
-                      </b>
+                      <b>{t.description}</b>
 
                       <small>
                         {t.transaction_date} ·{" "}
                         {categories.find(
                           (c) =>
-                            c.id ===
-                            t.category_id
+                            c.id === t.category_id
                         )?.name ||
                           "ללא קטגוריה"}
 
@@ -688,6 +653,11 @@ const h = {
                             "fixed"
                               ? "קבועה"
                               : "משתנה")
+                          : ""}
+
+                        {t.credit_card_last4
+                          ? " · כרטיס ••••" +
+                            t.credit_card_last4
                           : ""}
                       </small>
                     </div>
@@ -717,15 +687,12 @@ const h = {
         {tab === "fixed" && (
           <div className="panel">
             <div className="panelHead">
-              <h2>
-                הוצאות קבועות
-              </h2>
+              <h2>הוצאות קבועות</h2>
 
               <button
                 className="primary small"
-                onClick={() =>
-                  setModal("recurring")
-                }
+                type="button"
+                onClick={openNewRecurring}
               >
                 + הוצאה קבועה
               </button>
@@ -746,22 +713,40 @@ const h = {
                       <b>{r.name}</b>
 
                       <small>
-                        יום{" "}
-                        {r.day_of_month} ·{" "}
+                        יום {r.day_of_month} ·{" "}
                         {categories.find(
                           (c) =>
-                            c.id ===
-                            r.category_id
+                            c.id === r.category_id
                         )?.name ||
                           "ללא קטגוריה"}
                       </small>
                     </div>
 
-                    <b>
-                      {money(
-                        r.planned_amount
-                      )}
-                    </b>
+                    <div className="rowActions">
+                      <b>
+                        {money(r.planned_amount)}
+                      </b>
+
+                      <button
+                        className="ghost small"
+                        type="button"
+                        onClick={() =>
+                          openEditRecurring(r)
+                        }
+                      >
+                        עריכה
+                      </button>
+
+                      <button
+                        className="ghost small"
+                        type="button"
+                        onClick={() =>
+                          deleteRecurring(r)
+                        }
+                      >
+                        מחיקה
+                      </button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -776,6 +761,7 @@ const h = {
 
               <button
                 className="primary small"
+                type="button"
                 onClick={() =>
                   setModal("category")
                 }
@@ -809,9 +795,7 @@ const h = {
       {modal === "transaction" && (
         <Modal
           title="הוספת תנועה"
-          onClose={() =>
-            setModal(null)
-          }
+          onClose={() => setModal(null)}
         >
           <form
             className="form"
@@ -819,7 +803,6 @@ const h = {
           >
             <label>
               סוג
-
               <select
                 name="kind"
                 value={transactionKind}
@@ -832,7 +815,6 @@ const h = {
                 <option value="expense">
                   הוצאה
                 </option>
-
                 <option value="income">
                   הכנסה
                 </option>
@@ -841,7 +823,6 @@ const h = {
 
             <label>
               תיאור
-
               <input
                 name="description"
                 placeholder="למשל: סופר / משכורת"
@@ -851,7 +832,6 @@ const h = {
 
             <label>
               קטגוריה
-
               <select
                 name="category_id"
                 required
@@ -881,20 +861,20 @@ const h = {
             <div className="two">
               <label>
                 תאריך
-
                 <input
                   name="transaction_date"
                   type="date"
-                  defaultValue={new Date()
-                    .toISOString()
-                    .slice(0, 10)}
+                  defaultValue={
+                    new Date()
+                      .toISOString()
+                      .slice(0, 10)
+                  }
                   required
                 />
               </label>
 
               <label>
                 סכום מתוכנן
-
                 <input
                   name="planned_amount"
                   type="number"
@@ -907,7 +887,6 @@ const h = {
 
             <label>
               סכום בפועל (אם שונה)
-
               <input
                 name="actual_amount"
                 type="number"
@@ -916,29 +895,39 @@ const h = {
               />
             </label>
 
-            {transactionKind ===
-              "expense" && (
-              <label>
-                סוג הוצאה
+            {transactionKind === "expense" && (
+              <>
+                <label>
+                  סוג הוצאה
+                  <select
+                    name="expense_type"
+                    defaultValue="variable"
+                  >
+                    <option value="variable">
+                      משתנה
+                    </option>
 
-                <select
-                  name="expense_type"
-                  defaultValue="variable"
-                >
-                  <option value="variable">
-                    משתנה
-                  </option>
+                    <option value="fixed">
+                      קבועה
+                    </option>
+                  </select>
+                </label>
 
-                  <option value="fixed">
-                    קבועה
-                  </option>
-                </select>
-              </label>
+                <label>
+                  4 ספרות אחרונות של כרטיס האשראי
+                  <input
+                    name="credit_card_last4"
+                    inputMode="numeric"
+                    pattern="[0-9]{4}"
+                    maxLength="4"
+                    placeholder="לדוגמה: 4821"
+                  />
+                </label>
+              </>
             )}
 
             <label>
               מי שילם/קיבל
-
               <select name="person_user_id">
                 <option value="">
                   לא צוין
@@ -949,8 +938,7 @@ const h = {
                     key={m.user_id}
                     value={m.user_id}
                   >
-                    {m.profiles
-                      ?.display_name ||
+                    {m.profiles?.display_name ||
                       "משתמש"}
                   </option>
                 ))}
@@ -962,14 +950,12 @@ const h = {
                 name="completed"
                 type="checkbox"
                 defaultChecked
-              />
-
-              {" "}בוצע / חויב בפועל
+              />{" "}
+              בוצע / חויב בפועל
             </label>
 
             <label>
               הערה
-
               <textarea
                 name="note"
                 rows="3"
@@ -988,37 +974,49 @@ const h = {
 
       {modal === "recurring" && (
         <Modal
-          title="הוספת הוצאה קבועה"
-          onClose={() =>
-            setModal(null)
+          title={
+            editingRecurring
+              ? "עריכת הוצאה קבועה"
+              : "הוספת הוצאה קבועה"
           }
+          onClose={() => {
+            setEditingRecurring(null);
+            setModal(null);
+          }}
         >
           <form
             className="form"
+            key={editingRecurring?.id || "new"}
             onSubmit={saveRecurring}
           >
             <label>
               שם ההוצאה
-
               <input
                 name="name"
                 placeholder="למשל: משכנתא"
+                defaultValue={
+                  editingRecurring?.name || ""
+                }
                 required
               />
             </label>
 
             <label>
               קטגוריה
-
-              <select name="category_id">
+              <select
+                name="category_id"
+                defaultValue={
+                  editingRecurring?.category_id ||
+                  ""
+                }
+              >
                 <option value="">
                   ללא קטגוריה
                 </option>
 
                 {categories
                   .filter(
-                    (c) =>
-                      c.kind !== "income"
+                    (c) => c.kind !== "income"
                   )
                   .map((c) => (
                     <option
@@ -1034,25 +1032,30 @@ const h = {
             <div className="two">
               <label>
                 סכום מתוכנן
-
                 <input
                   name="planned_amount"
                   type="number"
                   min="0"
                   step="0.01"
+                  defaultValue={
+                    editingRecurring?.planned_amount ??
+                    ""
+                  }
                   required
                 />
               </label>
 
               <label>
                 יום בחודש
-
                 <input
                   name="day_of_month"
                   type="number"
                   min="1"
                   max="31"
-                  defaultValue="1"
+                  defaultValue={
+                    editingRecurring?.day_of_month ??
+                    1
+                  }
                   required
                 />
               </label>
@@ -1060,8 +1063,13 @@ const h = {
 
             <label>
               מי אחראי
-
-              <select name="person_user_id">
+              <select
+                name="person_user_id"
+                defaultValue={
+                  editingRecurring?.person_user_id ||
+                  ""
+                }
+              >
                 <option value="">
                   לא צוין
                 </option>
@@ -1071,8 +1079,7 @@ const h = {
                     key={m.user_id}
                     value={m.user_id}
                   >
-                    {m.profiles
-                      ?.display_name ||
+                    {m.profiles?.display_name ||
                       "משתמש"}
                   </option>
                 ))}
@@ -1081,10 +1088,12 @@ const h = {
 
             <label>
               הערה
-
               <textarea
                 name="note"
                 rows="3"
+                defaultValue={
+                  editingRecurring?.note || ""
+                }
               />
             </label>
 
@@ -1092,7 +1101,9 @@ const h = {
               className="primary"
               type="submit"
             >
-              שמירה
+              {editingRecurring
+                ? "עדכון"
+                : "שמירה"}
             </button>
           </form>
         </Modal>
@@ -1101,9 +1112,7 @@ const h = {
       {modal === "category" && (
         <Modal
           title="קטגוריה חדשה"
-          onClose={() =>
-            setModal(null)
-          }
+          onClose={() => setModal(null)}
         >
           <form
             className="form"
@@ -1111,7 +1120,6 @@ const h = {
           >
             <label>
               שם הקטגוריה
-
               <input
                 name="name"
                 required
@@ -1121,7 +1129,6 @@ const h = {
 
             <label>
               סוג
-
               <select
                 name="kind"
                 defaultValue="expense"
@@ -1151,4 +1158,4 @@ const h = {
       )}
     </main>
   );
-                }
+                      }
