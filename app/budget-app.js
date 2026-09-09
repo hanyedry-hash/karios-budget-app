@@ -64,7 +64,9 @@ export default function BudgetApp() {
       return;
     }
 
-    const { data: householdRows } = await supabase.rpc("get_my_household");
+    const { data: householdRows } = await supabase.rpc(
+      "get_my_household"
+    );
 
     const h = {
       data: householdRows?.[0]
@@ -107,13 +109,16 @@ export default function BudgetApp() {
       "get_my_household_members"
     );
 
-    const membersWithProfiles = (householdMembers || []).map((member) => ({
-      user_id: member.user_id,
-      role: member.role,
-      profiles: {
-        display_name: member.display_name || "משתמש",
-      },
-    }));
+    const membersWithProfiles = (householdMembers || []).map(
+      (member) => ({
+        user_id: member.user_id,
+        role: member.role,
+        profiles: {
+          display_name:
+            member.display_name || "משתמש",
+        },
+      })
+    );
 
     setHousehold(h.data);
     setProfile(p.data);
@@ -135,18 +140,19 @@ export default function BudgetApp() {
       }
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
+    const { data: sub } =
+      supabase.auth.onAuthStateChange((_e, s) => {
+        setSession(s);
 
-      if (s?.user) {
-        loadData(s.user.id);
-      } else {
-        setProfile(null);
-        setHousehold(null);
-        setTransactions([]);
-        setRecurring([]);
-      }
-    });
+        if (s?.user) {
+          loadData(s.user.id);
+        } else {
+          setProfile(null);
+          setHousehold(null);
+          setTransactions([]);
+          setRecurring([]);
+        }
+      });
 
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -155,10 +161,11 @@ export default function BudgetApp() {
     e.preventDefault();
     setAuthError("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (error) {
       setAuthError("פרטי הכניסה לא נכונים.");
@@ -180,31 +187,57 @@ export default function BudgetApp() {
   const income = currentTx
     .filter((t) => t.kind === "income")
     .reduce(
-      (s, t) => s + Number(t.actual_amount ?? t.planned_amount ?? 0),
+      (s, t) =>
+        s +
+        Number(
+          t.actual_amount ??
+            t.planned_amount ??
+            0
+        ),
       0
     );
 
   const expenses = currentTx
     .filter((t) => t.kind === "expense")
     .reduce(
-      (s, t) => s + Number(t.actual_amount ?? t.planned_amount ?? 0),
+      (s, t) =>
+        s +
+        Number(
+          t.actual_amount ??
+            t.planned_amount ??
+            0
+        ),
       0
     );
 
   const plannedExpenses = currentTx
     .filter((t) => t.kind === "expense")
-    .reduce((s, t) => s + Number(t.planned_amount || 0), 0);
-
-  const fixedExpenses = currentTx
-    .filter(
-      (t) => t.kind === "expense" && t.expense_type === "fixed"
-    )
     .reduce(
-      (s, t) => s + Number(t.actual_amount ?? t.planned_amount ?? 0),
+      (s, t) =>
+        s + Number(t.planned_amount || 0),
       0
     );
 
-  const variableExpenses = expenses - fixedExpenses;
+  const fixedExpenses = currentTx
+    .filter(
+      (t) =>
+        t.kind === "expense" &&
+        t.expense_type === "fixed"
+    )
+    .reduce(
+      (s, t) =>
+        s +
+        Number(
+          t.actual_amount ??
+            t.planned_amount ??
+            0
+        ),
+      0
+    );
+
+  const variableExpenses =
+    expenses - fixedExpenses;
+
   const balance = income - expenses;
 
   async function refresh() {
@@ -216,12 +249,18 @@ export default function BudgetApp() {
   async function saveTransaction(e) {
     e.preventDefault();
 
-    if (!household?.id || !session?.user?.id) {
-      alert("לא נמצא משק הבית או המשתמש המחובר.");
+    if (
+      !household?.id ||
+      !session?.user?.id
+    ) {
+      alert(
+        "לא נמצא משק הבית או המשתמש המחובר."
+      );
       return;
     }
 
     const f = new FormData(e.currentTarget);
+
     const kind = f.get("kind");
 
     const cardLast4Raw = String(
@@ -234,20 +273,31 @@ export default function BudgetApp() {
       household_id: household.id,
       kind,
       description: f.get("description"),
-      category_id: f.get("category_id") || null,
-      transaction_date: f.get("transaction_date"),
-      planned_amount: Number(f.get("planned_amount") || 0),
-      completed: f.get("completed") === "on",
+      category_id:
+        f.get("category_id") || null,
+      transaction_date:
+        f.get("transaction_date"),
+      planned_amount: Number(
+        f.get("planned_amount") || 0
+      ),
+      completed:
+        f.get("completed") === "on",
       actual_amount: f.get("actual_amount")
         ? Number(f.get("actual_amount"))
         : null,
       expense_type:
-        kind === "expense" ? f.get("expense_type") : null,
-      person_user_id: f.get("person_user_id") || null,
+        kind === "expense"
+          ? f.get("expense_type")
+          : null,
+      person_user_id:
+        f.get("person_user_id") || null,
+
       credit_card_last4:
-        kind === "expense" && cardLast4Raw.length === 4
+        kind === "expense" &&
+        cardLast4Raw.length === 4
           ? cardLast4Raw
           : null,
+
       note: f.get("note") || null,
       created_by: session.user.id,
     };
@@ -257,7 +307,10 @@ export default function BudgetApp() {
       .insert(row);
 
     if (error) {
-      alert("לא הצלחתי לשמור. " + error.message);
+      alert(
+        "לא הצלחתי לשמור. " +
+          error.message
+      );
     } else {
       setModal(null);
       await refresh();
@@ -287,10 +340,16 @@ export default function BudgetApp() {
     const row = {
       household_id: household.id,
       name: f.get("name"),
-      category_id: f.get("category_id") || null,
-      planned_amount: Number(f.get("planned_amount") || 0),
-      day_of_month: Number(f.get("day_of_month") || 1),
-      person_user_id: f.get("person_user_id") || null,
+      category_id:
+        f.get("category_id") || null,
+      planned_amount: Number(
+        f.get("planned_amount") || 0
+      ),
+      day_of_month: Number(
+        f.get("day_of_month") || 1
+      ),
+      person_user_id:
+        f.get("person_user_id") || null,
       is_active: true,
       note: f.get("note") || null,
     };
@@ -302,7 +361,10 @@ export default function BudgetApp() {
         .from("recurring_expenses")
         .update(row)
         .eq("id", editingRecurring.id)
-        .eq("household_id", household.id);
+        .eq(
+          "household_id",
+          household.id
+        );
     } else {
       result = await supabase
         .from("recurring_expenses")
@@ -310,7 +372,10 @@ export default function BudgetApp() {
     }
 
     if (result.error) {
-      alert("לא הצלחתי לשמור. " + result.error.message);
+      alert(
+        "לא הצלחתי לשמור. " +
+          result.error.message
+      );
     } else {
       setEditingRecurring(null);
       setModal(null);
@@ -333,12 +398,20 @@ export default function BudgetApp() {
 
     const { error } = await supabase
       .from("recurring_expenses")
-      .update({ is_active: false })
+      .update({
+        is_active: false,
+      })
       .eq("id", item.id)
-      .eq("household_id", household.id);
+      .eq(
+        "household_id",
+        household.id
+      );
 
     if (error) {
-      alert("לא הצלחתי למחוק. " + error.message);
+      alert(
+        "לא הצלחתי למחוק. " +
+          error.message
+      );
       return;
     }
 
@@ -365,7 +438,10 @@ export default function BudgetApp() {
       });
 
     if (error) {
-      alert("לא הצלחתי להוסיף קטגוריה. " + error.message);
+      alert(
+        "לא הצלחתי להוסיף קטגוריה. " +
+          error.message
+      );
     } else {
       setModal(null);
       await refresh();
@@ -376,19 +452,28 @@ export default function BudgetApp() {
     return (
       <main className="auth">
         <div className="authCard">
-          <div className="brandMark">₪</div>
+          <div className="brandMark">
+            ₪
+          </div>
 
           <h1>Kario's budget</h1>
 
-          <p>התקציב המשפחתי המשותף שלכם</p>
+          <p>
+            התקציב המשפחתי המשותף שלכם
+          </p>
 
-          <form onSubmit={login} className="form">
+          <form
+            onSubmit={login}
+            className="form"
+          >
             <label>
               אימייל
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) =>
+                  setEmail(e.target.value)
+                }
                 required
               />
             </label>
@@ -398,16 +483,25 @@ export default function BudgetApp() {
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) =>
+                  setPassword(
+                    e.target.value
+                  )
+                }
                 required
               />
             </label>
 
             {authError && (
-              <div className="error">{authError}</div>
+              <div className="error">
+                {authError}
+              </div>
             )}
 
-            <button className="primary" type="submit">
+            <button
+              className="primary"
+              type="submit"
+            >
               כניסה
             </button>
           </form>
@@ -433,8 +527,11 @@ export default function BudgetApp() {
           </div>
 
           <div className="subtitle">
-            {profile?.display_name || "משפחה"} ·{" "}
-            {household?.name || "תקציב משותף"}
+            {profile?.display_name ||
+              "משפחה"}{" "}
+            ·{" "}
+            {household?.name ||
+              "תקציב משותף"}
           </div>
         </div>
 
@@ -457,10 +554,14 @@ export default function BudgetApp() {
           <button
             key={id}
             className={
-              tab === id ? "tab active" : "tab"
+              tab === id
+                ? "tab active"
+                : "tab"
             }
             type="button"
-            onClick={() => setTab(id)}
+            onClick={() =>
+              setTab(id)
+            }
           >
             {label}
           </button>
@@ -468,15 +569,20 @@ export default function BudgetApp() {
       </nav>
 
       <section className="content">
-
         {tab === "dashboard" && (
           <>
             <div className="monthBar">
               <button
                 type="button"
                 onClick={() => {
-                  const d = new Date(month + "-15");
-                  d.setMonth(d.getMonth() - 1);
+                  const d = new Date(
+                    month + "-15"
+                  );
+
+                  d.setMonth(
+                    d.getMonth() - 1
+                  );
+
                   setMonth(monthKey(d));
                 }}
               >
@@ -486,17 +592,26 @@ export default function BudgetApp() {
               <strong>
                 {new Date(
                   month + "-15"
-                ).toLocaleDateString("he-IL", {
-                  month: "long",
-                  year: "numeric",
-                })}
+                ).toLocaleDateString(
+                  "he-IL",
+                  {
+                    month: "long",
+                    year: "numeric",
+                  }
+                )}
               </strong>
 
               <button
                 type="button"
                 onClick={() => {
-                  const d = new Date(month + "-15");
-                  d.setMonth(d.getMonth() + 1);
+                  const d = new Date(
+                    month + "-15"
+                  );
+
+                  d.setMonth(
+                    d.getMonth() + 1
+                  );
+
                   setMonth(monthKey(d));
                 }}
               >
@@ -506,18 +621,35 @@ export default function BudgetApp() {
 
             <div className="cards">
               <div className="card income">
-                <span>הכנסות בפועל</span>
-                <b>{money(income)}</b>
+                <span>
+                  הכנסות בפועל
+                </span>
+
+                <b>
+                  {money(income)}
+                </b>
               </div>
 
               <div className="card expense">
-                <span>הוצאות בפועל</span>
-                <b>{money(expenses)}</b>
+                <span>
+                  הוצאות בפועל
+                </span>
+
+                <b>
+                  {money(expenses)}
+                </b>
               </div>
 
               <div className="card">
-                <span>מתוכנן להוצאות</span>
-                <b>{money(plannedExpenses)}</b>
+                <span>
+                  מתוכנן להוצאות
+                </span>
+
+                <b>
+                  {money(
+                    plannedExpenses
+                  )}
+                </b>
               </div>
 
               <div
@@ -527,17 +659,27 @@ export default function BudgetApp() {
                     : "card balance negative"
                 }
               >
-                <span>יתרה</span>
-                <b>{money(balance)}</b>
+                <span>
+                  יתרה
+                </span>
+
+                <b>
+                  {money(balance)}
+                </b>
               </div>
             </div>
 
             <div className="split">
               <div className="panel">
-                <h2>הוצאות קבועות מול משתנות</h2>
+                <h2>
+                  הוצאות קבועות מול
+                  משתנות
+                </h2>
 
                 <div className="bigStat">
-                  {money(fixedExpenses)}
+                  {money(
+                    fixedExpenses
+                  )}
                 </div>
 
                 <div className="muted">
@@ -550,7 +692,8 @@ export default function BudgetApp() {
                       width: expenses
                         ? `${Math.min(
                             100,
-                            (fixedExpenses / expenses) *
+                            (fixedExpenses /
+                              expenses) *
                               100
                           )}%`
                         : "0%",
@@ -559,17 +702,28 @@ export default function BudgetApp() {
                 </div>
 
                 <div className="row">
-                  <span>משתנות</span>
-                  <b>{money(variableExpenses)}</b>
+                  <span>
+                    משתנות
+                  </span>
+
+                  <b>
+                    {money(
+                      variableExpenses
+                    )}
+                  </b>
                 </div>
               </div>
 
               <div className="panel">
-                <h2>הוצאות קבועות קרובות</h2>
+                <h2>
+                  הוצאות קבועות קרובות
+                </h2>
 
-                {recurring.length === 0 ? (
+                {recurring.length ===
+                0 ? (
                   <p className="muted">
-                    עדיין לא הוזנו הוצאות קבועות.
+                    עדיין לא הוזנו הוצאות
+                    קבועות.
                   </p>
                 ) : (
                   recurring
@@ -580,15 +734,22 @@ export default function BudgetApp() {
                         key={r.id}
                       >
                         <div>
-                          <b>{r.name}</b>
+                          <b>
+                            {r.name}
+                          </b>
+
                           <small>
                             כל חודש · יום{" "}
-                            {r.day_of_month}
+                            {
+                              r.day_of_month
+                            }
                           </small>
                         </div>
 
                         <b>
-                          {money(r.planned_amount)}
+                          {money(
+                            r.planned_amount
+                          )}
                         </b>
                       </div>
                     ))
@@ -607,8 +768,12 @@ export default function BudgetApp() {
                 className="primary small"
                 type="button"
                 onClick={() => {
-                  setTransactionKind("expense");
-                  setModal("transaction");
+                  setTransactionKind(
+                    "expense"
+                  );
+                  setModal(
+                    "transaction"
+                  );
                 }}
               >
                 + הוספת תנועה
@@ -620,7 +785,9 @@ export default function BudgetApp() {
                 type="month"
                 value={month}
                 onChange={(e) =>
-                  setMonth(e.target.value)
+                  setMonth(
+                    e.target.value
+                  )
                 }
               />
             </div>
@@ -637,13 +804,19 @@ export default function BudgetApp() {
                     key={t.id}
                   >
                     <div>
-                      <b>{t.description}</b>
+                      <b>
+                        {t.description}
+                      </b>
 
                       <small>
-                        {t.transaction_date} ·{" "}
+                        {
+                          t.transaction_date
+                        }{" "}
+                        ·{" "}
                         {categories.find(
                           (c) =>
-                            c.id === t.category_id
+                            c.id ===
+                            t.category_id
                         )?.name ||
                           "ללא קטגוריה"}
 
@@ -669,7 +842,8 @@ export default function BudgetApp() {
                           : "negative"
                       }
                     >
-                      {t.kind === "income"
+                      {t.kind ===
+                      "income"
                         ? "+"
                         : "−"}{" "}
                       {money(
@@ -687,12 +861,16 @@ export default function BudgetApp() {
         {tab === "fixed" && (
           <div className="panel">
             <div className="panelHead">
-              <h2>הוצאות קבועות</h2>
+              <h2>
+                הוצאות קבועות
+              </h2>
 
               <button
                 className="primary small"
                 type="button"
-                onClick={openNewRecurring}
+                onClick={
+                  openNewRecurring
+                }
               >
                 + הוצאה קבועה
               </button>
@@ -710,13 +888,20 @@ export default function BudgetApp() {
                     key={r.id}
                   >
                     <div>
-                      <b>{r.name}</b>
+                      <b>
+                        {r.name}
+                      </b>
 
                       <small>
-                        יום {r.day_of_month} ·{" "}
+                        יום{" "}
+                        {
+                          r.day_of_month
+                        }{" "}
+                        ·{" "}
                         {categories.find(
                           (c) =>
-                            c.id === r.category_id
+                            c.id ===
+                            r.category_id
                         )?.name ||
                           "ללא קטגוריה"}
                       </small>
@@ -724,14 +909,18 @@ export default function BudgetApp() {
 
                     <div className="rowActions">
                       <b>
-                        {money(r.planned_amount)}
+                        {money(
+                          r.planned_amount
+                        )}
                       </b>
 
                       <button
                         className="ghost small"
                         type="button"
                         onClick={() =>
-                          openEditRecurring(r)
+                          openEditRecurring(
+                            r
+                          )
                         }
                       >
                         עריכה
@@ -741,7 +930,9 @@ export default function BudgetApp() {
                         className="ghost small"
                         type="button"
                         onClick={() =>
-                          deleteRecurring(r)
+                          deleteRecurring(
+                            r
+                          )
                         }
                       >
                         מחיקה
@@ -776,7 +967,9 @@ export default function BudgetApp() {
                   className="category"
                   key={c.id}
                 >
-                  <span>{c.name}</span>
+                  <span>
+                    {c.name}
+                  </span>
 
                   <small>
                     {c.kind === "income"
@@ -795,17 +988,24 @@ export default function BudgetApp() {
       {modal === "transaction" && (
         <Modal
           title="הוספת תנועה"
-          onClose={() => setModal(null)}
+          onClose={() =>
+            setModal(null)
+          }
         >
           <form
             className="form"
-            onSubmit={saveTransaction}
+            onSubmit={
+              saveTransaction
+            }
           >
             <label>
               סוג
+
               <select
                 name="kind"
-                value={transactionKind}
+                value={
+                  transactionKind
+                }
                 onChange={(e) =>
                   setTransactionKind(
                     e.target.value
@@ -815,6 +1015,7 @@ export default function BudgetApp() {
                 <option value="expense">
                   הוצאה
                 </option>
+
                 <option value="income">
                   הכנסה
                 </option>
@@ -823,6 +1024,7 @@ export default function BudgetApp() {
 
             <label>
               תיאור
+
               <input
                 name="description"
                 placeholder="למשל: סופר / משכורת"
@@ -832,6 +1034,7 @@ export default function BudgetApp() {
 
             <label>
               קטגוריה
+
               <select
                 name="category_id"
                 required
@@ -861,6 +1064,7 @@ export default function BudgetApp() {
             <div className="two">
               <label>
                 תאריך
+
                 <input
                   name="transaction_date"
                   type="date"
@@ -875,6 +1079,7 @@ export default function BudgetApp() {
 
               <label>
                 סכום מתוכנן
+
                 <input
                   name="planned_amount"
                   type="number"
@@ -887,6 +1092,7 @@ export default function BudgetApp() {
 
             <label>
               סכום בפועל (אם שונה)
+
               <input
                 name="actual_amount"
                 type="number"
@@ -895,10 +1101,12 @@ export default function BudgetApp() {
               />
             </label>
 
-            {transactionKind === "expense" && (
+            {transactionKind ===
+              "expense" && (
               <>
                 <label>
                   סוג הוצאה
+
                   <select
                     name="expense_type"
                     defaultValue="variable"
@@ -914,7 +1122,9 @@ export default function BudgetApp() {
                 </label>
 
                 <label>
-                  4 ספרות אחרונות של כרטיס האשראי
+                  4 ספרות אחרונות של כרטיס
+                  האשראי
+
                   <input
                     name="credit_card_last4"
                     inputMode="numeric"
@@ -928,7 +1138,10 @@ export default function BudgetApp() {
 
             <label>
               מי שילם/קיבל
-              <select name="person_user_id">
+
+              <select
+                name="person_user_id"
+              >
                 <option value="">
                   לא צוין
                 </option>
@@ -938,7 +1151,8 @@ export default function BudgetApp() {
                     key={m.user_id}
                     value={m.user_id}
                   >
-                    {m.profiles?.display_name ||
+                    {m.profiles
+                      ?.display_name ||
                       "משתמש"}
                   </option>
                 ))}
@@ -956,6 +1170,7 @@ export default function BudgetApp() {
 
             <label>
               הערה
+
               <textarea
                 name="note"
                 rows="3"
@@ -980,22 +1195,31 @@ export default function BudgetApp() {
               : "הוספת הוצאה קבועה"
           }
           onClose={() => {
-            setEditingRecurring(null);
+            setEditingRecurring(
+              null
+            );
             setModal(null);
           }}
         >
           <form
             className="form"
-            key={editingRecurring?.id || "new"}
-            onSubmit={saveRecurring}
+            key={
+              editingRecurring?.id ||
+              "new"
+            }
+            onSubmit={
+              saveRecurring
+            }
           >
             <label>
               שם ההוצאה
+
               <input
                 name="name"
                 placeholder="למשל: משכנתא"
                 defaultValue={
-                  editingRecurring?.name || ""
+                  editingRecurring?.name ||
+                  ""
                 }
                 required
               />
@@ -1003,6 +1227,7 @@ export default function BudgetApp() {
 
             <label>
               קטגוריה
+
               <select
                 name="category_id"
                 defaultValue={
@@ -1016,7 +1241,9 @@ export default function BudgetApp() {
 
                 {categories
                   .filter(
-                    (c) => c.kind !== "income"
+                    (c) =>
+                      c.kind !==
+                      "income"
                   )
                   .map((c) => (
                     <option
@@ -1032,6 +1259,7 @@ export default function BudgetApp() {
             <div className="two">
               <label>
                 סכום מתוכנן
+
                 <input
                   name="planned_amount"
                   type="number"
@@ -1047,6 +1275,7 @@ export default function BudgetApp() {
 
               <label>
                 יום בחודש
+
                 <input
                   name="day_of_month"
                   type="number"
@@ -1063,6 +1292,7 @@ export default function BudgetApp() {
 
             <label>
               מי אחראי
+
               <select
                 name="person_user_id"
                 defaultValue={
@@ -1079,7 +1309,8 @@ export default function BudgetApp() {
                     key={m.user_id}
                     value={m.user_id}
                   >
-                    {m.profiles?.display_name ||
+                    {m.profiles
+                      ?.display_name ||
                       "משתמש"}
                   </option>
                 ))}
@@ -1088,11 +1319,13 @@ export default function BudgetApp() {
 
             <label>
               הערה
+
               <textarea
                 name="note"
                 rows="3"
                 defaultValue={
-                  editingRecurring?.note || ""
+                  editingRecurring?.note ||
+                  ""
                 }
               />
             </label>
@@ -1112,14 +1345,19 @@ export default function BudgetApp() {
       {modal === "category" && (
         <Modal
           title="קטגוריה חדשה"
-          onClose={() => setModal(null)}
+          onClose={() =>
+            setModal(null)
+          }
         >
           <form
             className="form"
-            onSubmit={saveCategory}
+            onSubmit={
+              saveCategory
+            }
           >
             <label>
               שם הקטגוריה
+
               <input
                 name="name"
                 required
@@ -1129,6 +1367,7 @@ export default function BudgetApp() {
 
             <label>
               סוג
+
               <select
                 name="kind"
                 defaultValue="expense"
@@ -1158,4 +1397,4 @@ export default function BudgetApp() {
       )}
     </main>
   );
-                      }
+                  }
