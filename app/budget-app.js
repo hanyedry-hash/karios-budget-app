@@ -21,7 +21,9 @@ function Modal({ title, children, onClose }) {
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modalHead">
           <h2>{title}</h2>
-          <button className="iconBtn" onClick={onClose}>×</button>
+          <button className="iconBtn" onClick={onClose}>
+            ×
+          </button>
         </div>
         {children}
       </div>
@@ -77,7 +79,7 @@ export default function BudgetApp() {
       .eq("id", userId)
       .single();
 
-    const [cats, tx, rec, mem] = await Promise.all([
+    const [cats, tx, rec] = await Promise.all([
       supabase
         .from("categories")
         .select("*")
@@ -89,7 +91,9 @@ export default function BudgetApp() {
         .from("transactions")
         .select("*")
         .eq("household_id", hm.household_id)
-        .order("transaction_date", { ascending: false }),
+        .order("transaction_date", {
+          ascending: false,
+        }),
 
       supabase
         .from("recurring_expenses")
@@ -97,54 +101,37 @@ export default function BudgetApp() {
         .eq("household_id", hm.household_id)
         .eq("is_active", true)
         .order("day_of_month"),
-
-      supabase
-        .from("household_members")
-        .select("user_id, role")
-        .eq("household_id", hm.household_id),
     ]);
 
-    if (p.error) {
-      console.error("profiles error:", p.error);
-    }
-
-    if (mem.error) {
-      console.error("members error:", mem.error);
-    }
-
     /*
-      Load all household profiles separately.
-      This avoids relying on the Supabase relationship
-      between household_members and profiles.
+      Load household members through the
+      SECURITY DEFINER function in Supabase.
+      This avoids relying on the profiles RLS
+      relationship from the browser.
     */
-    const memberRows = mem.data || [];
-    const userIds = memberRows.map((m) => m.user_id);
-
-    let profs = [];
-
-    if (userIds.length > 0) {
-      const { data: profileRows, error: profilesError } = await supabase
-        .from("profiles")
-        .select("id, display_name")
-        .in("id", userIds);
-
-      if (profilesError) {
-        console.error("household profiles error:", profilesError);
-      } else {
-        profs = profileRows || [];
-      }
-    }
-
-    const profilesById = Object.fromEntries(
-      profs.map((profileRow) => [
-        profileRow.id,
-        profileRow,
-      ])
+    const {
+      data: householdMembers,
+      error: membersError,
+    } = await supabase.rpc(
+      "get_my_household_members"
     );
 
-    const membersWithProfiles = memberRows.map((member) => ({
-      ...member,
-      profiles: profilesById[member.user_id] || null,
+    if (membersError) {
+      console.error(
+        "get_my_household_members error:",
+        membersError
+      );
+    }
+
+    const membersWithProfiles = (
+      householdMembers || []
+    ).map((member) => ({
+      user_id: member.user_id,
+      role: member.role,
+      profiles: {
+        display_name:
+          member.display_name || "משתמש",
+      },
     }));
 
     setHousehold(h.data);
@@ -168,19 +155,20 @@ export default function BudgetApp() {
       }
     });
 
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => {
-      setSession(s);
+    const { data: sub } =
+      supabase.auth.onAuthStateChange((_e, s) => {
+        setSession(s);
 
-      if (s?.user) {
-        loadData(s.user.id);
-      } else {
-        setProfile(null);
-        setHousehold(null);
-        setTransactions([]);
-        setRecurring([]);
-        setMembers([]);
-      }
-    });
+        if (s?.user) {
+          loadData(s.user.id);
+        } else {
+          setProfile(null);
+          setHousehold(null);
+          setTransactions([]);
+          setRecurring([]);
+          setMembers([]);
+        }
+      });
 
     return () => sub.subscription.unsubscribe();
   }, []);
@@ -189,10 +177,11 @@ export default function BudgetApp() {
     e.preventDefault();
     setAuthError("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (error) {
       setAuthError("פרטי הכניסה לא נכונים.");
@@ -206,7 +195,9 @@ export default function BudgetApp() {
   const currentTx = useMemo(
     () =>
       transactions.filter((t) =>
-        String(t.transaction_date || "").startsWith(month)
+        String(
+          t.transaction_date || ""
+        ).startsWith(month)
       ),
     [transactions, month]
   );
@@ -215,7 +206,12 @@ export default function BudgetApp() {
     .filter((t) => t.kind === "income")
     .reduce(
       (s, t) =>
-        s + Number(t.actual_amount ?? t.planned_amount ?? 0),
+        s +
+        Number(
+          t.actual_amount ??
+            t.planned_amount ??
+            0
+        ),
       0
     );
 
@@ -223,14 +219,20 @@ export default function BudgetApp() {
     .filter((t) => t.kind === "expense")
     .reduce(
       (s, t) =>
-        s + Number(t.actual_amount ?? t.planned_amount ?? 0),
+        s +
+        Number(
+          t.actual_amount ??
+            t.planned_amount ??
+            0
+        ),
       0
     );
 
   const plannedExpenses = currentTx
     .filter((t) => t.kind === "expense")
     .reduce(
-      (s, t) => s + Number(t.planned_amount || 0),
+      (s, t) =>
+        s + Number(t.planned_amount || 0),
       0
     );
 
@@ -242,11 +244,18 @@ export default function BudgetApp() {
     )
     .reduce(
       (s, t) =>
-        s + Number(t.actual_amount ?? t.planned_amount ?? 0),
+        s +
+        Number(
+          t.actual_amount ??
+            t.planned_amount ??
+            0
+        ),
       0
     );
 
-  const variableExpenses = expenses - fixedExpenses;
+  const variableExpenses =
+    expenses - fixedExpenses;
+
   const balance = income - expenses;
 
   async function refresh() {
@@ -265,11 +274,18 @@ export default function BudgetApp() {
       household_id: household.id,
       kind,
       description: f.get("description"),
-      category_id: f.get("category_id") || null,
-      transaction_date: f.get("transaction_date"),
-      planned_amount: Number(f.get("planned_amount") || 0),
-      completed: f.get("completed") === "on",
-      actual_amount: f.get("actual_amount")
+      category_id:
+        f.get("category_id") || null,
+      transaction_date:
+        f.get("transaction_date"),
+      planned_amount: Number(
+        f.get("planned_amount") || 0
+      ),
+      completed:
+        f.get("completed") === "on",
+      actual_amount: f.get(
+        "actual_amount"
+      )
         ? Number(f.get("actual_amount"))
         : null,
       expense_type:
@@ -287,7 +303,10 @@ export default function BudgetApp() {
       .insert(row);
 
     if (error) {
-      alert("לא הצלחתי לשמור. " + error.message);
+      alert(
+        "לא הצלחתי לשמור. " +
+          error.message
+      );
     } else {
       setModal(null);
       await refresh();
@@ -302,245 +321,9 @@ export default function BudgetApp() {
     const row = {
       household_id: household.id,
       name: f.get("name"),
-      category_id: f.get("category_id") || null,
+      category_id:
+        f.get("category_id") || null,
       planned_amount: Number(
         f.get("planned_amount") || 0
       ),
       day_of_month: Number(
-        f.get("day_of_month") || 1
-      ),
-      person_user_id:
-        f.get("person_user_id") || null,
-      is_active: true,
-      note: f.get("note") || null,
-    };
-
-    const { error } = await supabase
-      .from("recurring_expenses")
-      .insert(row);
-
-    if (error) {
-      alert("לא הצלחתי לשמור. " + error.message);
-    } else {
-      setModal(null);
-      await refresh();
-    }
-  }
-
-  async function saveCategory(e) {
-    e.preventDefault();
-
-    const f = new FormData(e.currentTarget);
-
-    const { error } = await supabase
-      .from("categories")
-      .insert({
-        household_id: household.id,
-        name: f.get("name"),
-        kind: f.get("kind"),
-        is_active: true,
-      });
-
-    if (error) {
-      alert(
-        "לא הצלחתי להוסיף קטגוריה. " +
-        error.message
-      );
-    } else {
-      setModal(null);
-      await refresh();
-    }
-  }
-
-  if (!session) {
-    return (
-      <main className="auth">
-        <div className="authCard">
-          <div className="brandMark">₪</div>
-
-          <h1>Kario's budget</h1>
-
-          <p>
-            התקציב המשפחתי המשותף שלכם
-          </p>
-
-          <form
-            onSubmit={login}
-            className="form"
-          >
-            <label>
-              אימייל
-              <input
-                type="email"
-                value={email}
-                onChange={(e) =>
-                  setEmail(e.target.value)
-                }
-                required
-              />
-            </label>
-
-            <label>
-              סיסמה
-              <input
-                type="password"
-                value={password}
-                onChange={(e) =>
-                  setPassword(e.target.value)
-                }
-                required
-              />
-            </label>
-
-            {authError && (
-              <div className="error">
-                {authError}
-              </div>
-            )}
-
-            <button
-              className="primary"
-              type="submit"
-            >
-              כניסה
-            </button>
-          </form>
-        </div>
-      </main>
-    );
-  }
-
-  if (loading) {
-    return (
-      <main className="loading">
-        טוען את התקציב…
-      </main>
-    );
-  }
-
-  return (
-    <main className="shell">
-      <header className="topbar">
-        <div>
-          <div className="title">
-            Kario's budget
-          </div>
-
-          <div className="subtitle">
-            {profile?.display_name || "משפחה"} ·{" "}
-            {household?.name || "תקציב משותף"}
-          </div>
-        </div>
-
-        <button
-          className="ghost"
-          onClick={logout}
-        >
-          יציאה
-        </button>
-      </header>
-
-      <nav className="tabs">
-        {[
-          ["dashboard", "סקירה"],
-          ["transactions", "תנועות"],
-          ["fixed", "הוצאות קבועות"],
-          ["categories", "קטגוריות"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            className={
-              tab === id
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-
-      <section className="content">
-
-        {tab === "dashboard" && (
-          <>
-            <div className="monthBar">
-              <button
-                onClick={() => {
-                  const d = new Date(
-                    month + "-15"
-                  );
-                  d.setMonth(
-                    d.getMonth() - 1
-                  );
-                  setMonth(monthKey(d));
-                }}
-              >
-                ‹
-              </button>
-
-              <strong>
-                {new Date(
-                  month + "-15"
-                ).toLocaleDateString(
-                  "he-IL",
-                  {
-                    month: "long",
-                    year: "numeric",
-                  }
-                )}
-              </strong>
-
-              <button
-                onClick={() => {
-                  const d = new Date(
-                    month + "-15"
-                  );
-                  d.setMonth(
-                    d.getMonth() + 1
-                  );
-                  setMonth(monthKey(d));
-                }}
-              >
-                ›
-              </button>
-            </div>
-
-            <div className="cards">
-              <div className="card income">
-                <span>
-                  הכנסות בפועל
-                </span>
-                <b>{money(income)}</b>
-              </div>
-
-              <div className="card expense">
-                <span>
-                  הוצאות בפועל
-                </span>
-                <b>{money(expenses)}</b>
-              </div>
-
-              <div className="card">
-                <span>
-                  מתוכנן להוצאות
-                </span>
-                <b>
-                  {money(plannedExpenses)}
-                </b>
-              </div>
-
-              <div
-                className={
-                  balance >= 0
-                    ? "card balance"
-                    : "card balance negative"
-                }
-              >
-                <span>יתרה</span>
-                <b>{money(balance)}</b>
-              </div>
-            </div>
-
-            <div
