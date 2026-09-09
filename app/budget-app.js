@@ -63,11 +63,15 @@ export default function BudgetApp() {
       return;
     }
 
-    const h = await supabase
-      .from("households")
-      .select("*")
-      .eq("id", hm.household_id)
-      .single();
+    const { data: householdRows } = await supabase.rpc("get_my_household");
+const h = {
+  data: householdRows?.[0]
+    ? {
+        id: householdRows[0].household_id,
+        name: householdRows[0].household_name
+      }
+    : null
+};
 
     const p = await supabase
       .from("profiles")
