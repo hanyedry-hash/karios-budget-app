@@ -28,9 +28,10 @@ const monthKey = (d = new Date()) => {
 
 const todayKey = () => {
   const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
+
+  return `${d.getFullYear()}-${String(
+    d.getMonth() + 1
+  ).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
 const paymentLabel = (value) =>
@@ -39,18 +40,22 @@ const paymentLabel = (value) =>
 function Modal({ title, children, onClose }) {
   return (
     <div className="modalBackdrop" onMouseDown={onClose}>
-      <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
+      <div
+        className="modal"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
         <div className="modalHead">
           <h2>{title}</h2>
+
           <button
             type="button"
             className="iconBtn"
             onClick={onClose}
-            aria-label="סגירה"
           >
             ×
           </button>
         </div>
+
         {children}
       </div>
     </div>
@@ -74,87 +79,114 @@ export default function BudgetApp() {
   const [authError, setAuthError] = useState("");
 
   const [modal, setModal] = useState(null);
-  const [transactionKind, setTransactionKind] = useState("expense");
 
-  const [editingTransaction, setEditingTransaction] = useState(null);
-  const [editingRecurring, setEditingRecurring] = useState(null);
-  const [chargingRecurring, setChargingRecurring] = useState(null);
+  const [transactionKind, setTransactionKind] =
+    useState("expense");
+
+  const [incomeType, setIncomeType] =
+    useState("variable");
+
+  const [editingTransaction, setEditingTransaction] =
+    useState(null);
+
+  const [editingRecurring, setEditingRecurring] =
+    useState(null);
+
+  const [chargingRecurring, setChargingRecurring] =
+    useState(null);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
   const [draft, setDraft] = useState(null);
 
-  const DRAFT_KEY = "karios-budget-transaction-draft";
+  const DRAFT_KEY =
+    "karios-budget-transaction-draft";
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * LOAD DATA
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   async function loadData(userId) {
     setLoading(true);
 
-    const { data: hm, error: hmError } = await supabase
-      .from("household_members")
-      .select("household_id, role")
-      .eq("user_id", userId)
-      .maybeSingle();
+    const { data: hm, error: hmError } =
+      await supabase
+        .from("household_members")
+        .select("household_id, role")
+        .eq("user_id", userId)
+        .maybeSingle();
 
     if (hmError || !hm) {
       setLoading(false);
       return;
     }
 
-    const [householdResult, profileResult, cats, tx, rec, mem] =
-      await Promise.all([
-        supabase
-          .from("households")
-          .select("*")
-          .eq("id", hm.household_id)
-          .single(),
+    const [
+      householdResult,
+      profileResult,
+      categoriesResult,
+      transactionsResult,
+      recurringResult,
+      membersResult,
+    ] = await Promise.all([
+      supabase
+        .from("households")
+        .select("*")
+        .eq("id", hm.household_id)
+        .single(),
 
-        supabase
-          .from("profiles")
-          .select("*")
-          .eq("id", userId)
-          .single(),
+      supabase
+        .from("profiles")
+        .select("*")
+        .eq("id", userId)
+        .single(),
 
-        supabase
-          .from("categories")
-          .select("*")
-          .eq("household_id", hm.household_id)
-          .eq("is_active", true)
-          .order("name"),
+      supabase
+        .from("categories")
+        .select("*")
+        .eq("household_id", hm.household_id)
+        .eq("is_active", true)
+        .order("name"),
 
-        supabase
-          .from("transactions")
-          .select("*")
-          .eq("household_id", hm.household_id)
-          .order("transaction_date", { ascending: false }),
+      supabase
+        .from("transactions")
+        .select("*")
+        .eq("household_id", hm.household_id)
+        .order("transaction_date", {
+          ascending: false,
+        }),
 
-        supabase
-          .from("recurring_expenses")
-          .select("*")
-          .eq("household_id", hm.household_id)
-          .eq("is_active", true)
-          .order("day_of_month"),
+      supabase
+        .from("recurring_expenses")
+        .select("*")
+        .eq("household_id", hm.household_id)
+        .eq("is_active", true)
+        .order("day_of_month"),
 
-        supabase.rpc("get_my_household_members"),
-      ]);
+      supabase.rpc("get_my_household_members"),
+    ]);
 
     setHousehold(householdResult.data);
     setProfile(profileResult.data);
-    setCategories(cats.data || []);
-    setTransactions(tx.data || []);
-    setRecurring(rec.data || []);
 
-    if (mem.data) {
-      setMembers(mem.data);
-    } else {
-      setMembers([]);
-    }
+    setCategories(
+      categoriesResult.data || []
+    );
+
+    setTransactions(
+      transactionsResult.data || []
+    );
+
+    setRecurring(
+      recurringResult.data || []
+    );
+
+    setMembers(
+      membersResult.data || []
+    );
 
     setLoading(false);
   }
@@ -172,20 +204,22 @@ export default function BudgetApp() {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
+    } = supabase.auth.onAuthStateChange(
+      (_event, newSession) => {
+        setSession(newSession);
 
-      if (s?.user) {
-        loadData(s.user.id);
-      } else {
-        setProfile(null);
-        setHousehold(null);
-        setTransactions([]);
-        setRecurring([]);
-        setCategories([]);
-        setMembers([]);
+        if (newSession?.user) {
+          loadData(newSession.user.id);
+        } else {
+          setProfile(null);
+          setHousehold(null);
+          setTransactions([]);
+          setRecurring([]);
+          setCategories([]);
+          setMembers([]);
+        }
       }
-    });
+    );
 
     return () => subscription.unsubscribe();
   }, []);
@@ -197,22 +231,26 @@ export default function BudgetApp() {
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * AUTH
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   async function login(e) {
     e.preventDefault();
+
     setAuthError("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
+    const { error } =
+      await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
 
     if (error) {
-      setAuthError("פרטי הכניסה לא נכונים.");
+      setAuthError(
+        "פרטי הכניסה לא נכונים."
+      );
     }
   }
 
@@ -221,51 +259,64 @@ export default function BudgetApp() {
   }
 
   /*
-   * ---------------------------------------------------------
-   * MONTH DATA
-   * ---------------------------------------------------------
+   * =========================================================
+   * CURRENT MONTH
+   * =========================================================
    */
 
   const currentTx = useMemo(
     () =>
       transactions.filter((t) =>
-        String(t.transaction_date || "").startsWith(month)
+        String(
+          t.transaction_date || ""
+        ).startsWith(month)
       ),
     [transactions, month]
   );
 
   /*
-   * A recurring expense is "charged" for a month ONLY when
-   * a real transaction exists and:
-   * completed === true
-   * actual_amount !== null
+   * =========================================================
+   * RECURRING EXPENSES FOR CURRENT MONTH
    *
-   * The recurring expense itself is NOT a transaction.
+   * Recurring expenses are plans.
+   * They become actual expenses only when charged.
+   * =========================================================
    */
 
   const recurringForMonth = useMemo(() => {
     return recurring.map((r) => {
-      const linked = transactions.find(
-        (t) =>
-          t.recurring_expense_id === r.id &&
-          t.recurring_month === month &&
-          t.completed === true &&
-          t.actual_amount !== null
-      );
+      const linkedTransaction =
+        transactions.find(
+          (t) =>
+            t.recurring_expense_id === r.id &&
+            t.recurring_month === month &&
+            t.kind === "expense" &&
+            t.completed === true &&
+            t.actual_amount !== null
+        );
 
       return {
         ...r,
-        chargedTransaction: linked || null,
-        charged: !!linked,
+        chargedTransaction:
+          linkedTransaction || null,
+        charged: Boolean(linkedTransaction),
       };
     });
-  }, [recurring, transactions, month]);
+  }, [
+    recurring,
+    transactions,
+    month,
+  ]);
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * DASHBOARD CALCULATIONS
-   * ---------------------------------------------------------
+   * =========================================================
    */
+
+  // Income:
+  // If actual amount exists -> use it.
+  // Otherwise, for a completed income -> use planned amount.
 
   const income = useMemo(
     () =>
@@ -273,12 +324,22 @@ export default function BudgetApp() {
         .filter(
           (t) =>
             t.kind === "income" &&
-            t.completed === true &&
-            t.actual_amount !== null
+            t.completed === true
         )
-        .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0),
+        .reduce(
+          (sum, t) =>
+            sum +
+            Number(
+              t.actual_amount ??
+                t.planned_amount ??
+                0
+            ),
+          0
+        ),
     [currentTx]
   );
+
+  // Actual expenses only.
 
   const expenses = useMemo(
     () =>
@@ -289,21 +350,15 @@ export default function BudgetApp() {
             t.completed === true &&
             t.actual_amount !== null
         )
-        .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0),
+        .reduce(
+          (sum, t) =>
+            sum + Number(t.actual_amount || 0),
+          0
+        ),
     [currentTx]
   );
 
-  const plannedExpenses = useMemo(() => {
-    const plannedTransactions = currentTx
-      .filter((t) => t.kind === "expense")
-      .reduce((sum, t) => sum + Number(t.planned_amount || 0), 0);
-
-    const pendingRecurring = recurringForMonth
-      .filter((r) => !r.charged)
-      .reduce((sum, r) => sum + Number(r.planned_amount || 0), 0);
-
-    return plannedTransactions + pendingRecurring;
-  }, [currentTx, recurringForMonth]);
+  // Fixed expenses already charged.
 
   const fixedCharged = useMemo(
     () =>
@@ -315,9 +370,15 @@ export default function BudgetApp() {
             t.completed === true &&
             t.actual_amount !== null
         )
-        .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0),
+        .reduce(
+          (sum, t) =>
+            sum + Number(t.actual_amount || 0),
+          0
+        ),
     [currentTx]
   );
+
+  // Variable expenses already charged.
 
   const variableExpenses = useMemo(
     () =>
@@ -329,36 +390,95 @@ export default function BudgetApp() {
             t.completed === true &&
             t.actual_amount !== null
         )
-        .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0),
+        .reduce(
+          (sum, t) =>
+            sum + Number(t.actual_amount || 0),
+          0
+        ),
     [currentTx]
   );
+
+  // Fixed expenses still expected to be charged.
 
   const pendingFixed = useMemo(
     () =>
       recurringForMonth
         .filter((r) => !r.charged)
-        .reduce((sum, r) => sum + Number(r.planned_amount || 0), 0),
+        .reduce(
+          (sum, r) =>
+            sum +
+            Number(r.planned_amount || 0),
+          0
+        ),
     [recurringForMonth]
   );
 
-  const fixedPlanned = fixedCharged + pendingFixed;
+  const fixedPlanned =
+    fixedCharged + pendingFixed;
 
-  const balance = income - expenses;
+  // Planned variable expenses that are not yet charged.
+
+  const pendingVariable = useMemo(
+    () =>
+      currentTx
+        .filter(
+          (t) =>
+            t.kind === "expense" &&
+            t.expense_type !== "fixed" &&
+            t.completed !== true
+        )
+        .reduce(
+          (sum, t) =>
+            sum +
+            Number(t.planned_amount || 0),
+          0
+        ),
+    [currentTx]
+  );
+
+  const plannedExpenses =
+    expenses +
+    pendingFixed +
+    pendingVariable;
+
+  const balance =
+    income - expenses;
 
   const fixedPercent =
-    expenses > 0 ? Math.min(100, (fixedCharged / expenses) * 100) : 0;
+    expenses > 0
+      ? Math.min(
+          100,
+          (fixedCharged / expenses) * 100
+        )
+      : 0;
 
   const variablePercent =
-    expenses > 0 ? Math.min(100, (variableExpenses / expenses) * 100) : 0;
+    expenses > 0
+      ? Math.min(
+          100,
+          (variableExpenses / expenses) * 100
+        )
+      : 0;
 
   const fixedProgress =
     fixedPlanned > 0
-      ? Math.min(100, (fixedCharged / fixedPlanned) * 100)
+      ? Math.min(
+          100,
+          (fixedCharged / fixedPlanned) * 100
+        )
       : 0;
+
+  /*
+   * CATEGORY BREAKDOWN
+   */
 
   const categoryBreakdown = useMemo(() => {
     return categories
-      .filter((c) => c.kind === "expense" || c.kind === "both")
+      .filter(
+        (c) =>
+          c.kind === "expense" ||
+          c.kind === "both"
+      )
       .map((category) => {
         const amount = currentTx
           .filter(
@@ -368,34 +488,54 @@ export default function BudgetApp() {
               t.actual_amount !== null &&
               t.category_id === category.id
           )
-          .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0);
+          .reduce(
+            (sum, t) =>
+              sum +
+              Number(t.actual_amount || 0),
+            0
+          );
 
         return {
           ...category,
           amount,
-          percent: expenses > 0 ? (amount / expenses) * 100 : 0,
+          percent:
+            expenses > 0
+              ? (amount / expenses) * 100
+              : 0,
         };
       })
       .filter((c) => c.amount > 0)
-      .sort((a, b) => b.amount - a.amount);
-  }, [categories, currentTx, expenses]);
+      .sort(
+        (a, b) => b.amount - a.amount
+      );
+  }, [
+    categories,
+    currentTx,
+    expenses,
+  ]);
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * TRANSACTION DRAFT
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   function saveDraftFromForm(form) {
     try {
       const fd = new FormData(form);
-      const values = Object.fromEntries(fd.entries());
 
-      values.completed = fd.get("completed") === "on";
+      const values =
+        Object.fromEntries(fd.entries());
 
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(values));
+      values.completed =
+        fd.get("completed") === "on";
+
+      localStorage.setItem(
+        DRAFT_KEY,
+        JSON.stringify(values)
+      );
     } catch {
-      // Ignore local draft errors
+      // Ignore draft errors.
     }
   }
 
@@ -403,7 +543,7 @@ export default function BudgetApp() {
     try {
       localStorage.removeItem(DRAFT_KEY);
     } catch {
-      // Ignore
+      // Ignore.
     }
 
     setDraft(null);
@@ -412,64 +552,114 @@ export default function BudgetApp() {
   function openTransactionModal(tx = null) {
     setEditingTransaction(tx);
 
-    if (!tx) {
+    if (tx) {
+      setDraft(null);
+      setTransactionKind(
+        tx.kind || "expense"
+      );
+
+      if (tx.kind === "income") {
+        setIncomeType(
+          tx.expense_type || "variable"
+        );
+      }
+    } else {
       try {
-        const saved = localStorage.getItem(DRAFT_KEY);
-        setDraft(saved ? JSON.parse(saved) : null);
+        const saved =
+          localStorage.getItem(
+            DRAFT_KEY
+          );
+
+        setDraft(
+          saved ? JSON.parse(saved) : null
+        );
       } catch {
         setDraft(null);
       }
 
       setTransactionKind("expense");
-    } else {
-      setDraft(null);
-      setTransactionKind(tx.kind || "expense");
+      setIncomeType("variable");
     }
 
     setModal("transaction");
   }
 
   /*
-   * ---------------------------------------------------------
-   * TRANSACTIONS
-   * ---------------------------------------------------------
+   * =========================================================
+   * SAVE TRANSACTION
+   * =========================================================
    */
 
   async function saveTransaction(e) {
     e.preventDefault();
 
-    const f = new FormData(e.currentTarget);
+    const f = new FormData(
+      e.currentTarget
+    );
+
     const kind = f.get("kind");
 
-    const completed = f.get("completed") === "on";
+    const completed =
+      f.get("completed") === "on";
 
-    const actualRaw = f.get("actual_amount");
+    const actualRaw =
+      f.get("actual_amount");
+
     const actualAmount =
-      actualRaw !== null && actualRaw !== ""
+      actualRaw !== null &&
+      actualRaw !== ""
         ? Number(actualRaw)
         : completed
-        ? Number(f.get("planned_amount") || 0)
+        ? Number(
+            f.get("planned_amount") || 0
+          )
         : null;
+
+    const type =
+      kind === "expense"
+        ? f.get("expense_type")
+        : f.get("income_type");
 
     const row = {
       household_id: household.id,
       kind,
-      description: f.get("description"),
-      category_id: f.get("category_id") || null,
-      transaction_date: f.get("transaction_date"),
-      planned_amount: Number(f.get("planned_amount") || 0),
+      description:
+        f.get("description"),
+      category_id:
+        f.get("category_id") || null,
+      transaction_date:
+        f.get("transaction_date"),
+      planned_amount:
+        Number(
+          f.get("planned_amount") || 0
+        ),
       completed,
-      actual_amount: completed ? actualAmount : null,
-      expense_type: f.get("expense_type") || null,
-      person_user_id: f.get("person_user_id") || null,
-      note: f.get("note") || null,
-      payment_method: f.get("payment_method") || null,
-      merchant: f.get("merchant") || null,
-      credit_card_last4:
-        f.get("payment_method") === "credit_card"
-          ? f.get("credit_card_last4") || null
+      actual_amount:
+        completed
+          ? actualAmount
           : null,
-      created_by: session.user.id,
+      expense_type:
+        type || null,
+      person_user_id:
+        f.get("person_user_id") || null,
+      note:
+        f.get("note") || null,
+      payment_method:
+        f.get("payment_method") || null,
+      merchant:
+        f.get("merchant") || null,
+      credit_card_last4:
+        f.get("payment_method") ===
+        "credit_card"
+          ? f.get(
+              "credit_card_last4"
+            ) || null
+          : null,
+      created_by:
+        editingTransaction?.created_by ||
+        session.user.id,
+      updated_at:
+        new Date().toISOString(),
     };
 
     let result;
@@ -477,26 +667,38 @@ export default function BudgetApp() {
     if (editingTransaction) {
       result = await supabase
         .from("transactions")
-        .update({
-          ...row,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", editingTransaction.id);
+        .update(row)
+        .eq(
+          "id",
+          editingTransaction.id
+        );
     } else {
-      result = await supabase.from("transactions").insert(row);
+      result = await supabase
+        .from("transactions")
+        .insert(row);
     }
 
     if (result.error) {
-      alert("לא הצלחתי לשמור את התנועה.\n\n" + result.error.message);
+      alert(
+        "לא הצלחתי לשמור את התנועה.\n\n" +
+          result.error.message
+      );
       return;
     }
 
     clearDraft();
+
     setEditingTransaction(null);
     setModal(null);
 
     await refresh();
   }
+
+  /*
+   * =========================================================
+   * DELETE TRANSACTION
+   * =========================================================
+   */
 
   async function deleteTransaction(tx) {
     const ok = window.confirm(
@@ -505,13 +707,17 @@ export default function BudgetApp() {
 
     if (!ok) return;
 
-    const { error } = await supabase
-      .from("transactions")
-      .delete()
-      .eq("id", tx.id);
+    const { error } =
+      await supabase
+        .from("transactions")
+        .delete()
+        .eq("id", tx.id);
 
     if (error) {
-      alert("לא הצלחתי למחוק את התנועה.\n\n" + error.message);
+      alert(
+        "לא הצלחתי למחוק את התנועה.\n\n" +
+          error.message
+      );
       return;
     }
 
@@ -519,32 +725,50 @@ export default function BudgetApp() {
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * RECURRING EXPENSES
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
-  function openRecurringModal(rec = null) {
-    setEditingRecurring(rec);
+  function openRecurringModal(
+    recurringExpense = null
+  ) {
+    setEditingRecurring(
+      recurringExpense
+    );
+
     setModal("recurring");
   }
 
   async function saveRecurring(e) {
     e.preventDefault();
 
-    const f = new FormData(e.currentTarget);
+    const f = new FormData(
+      e.currentTarget
+    );
 
     const row = {
       household_id: household.id,
       name: f.get("name"),
-      category_id: f.get("category_id") || null,
-      planned_amount: Number(f.get("planned_amount") || 0),
-      day_of_month: Number(f.get("day_of_month") || 1),
-      person_user_id: f.get("person_user_id") || null,
+      category_id:
+        f.get("category_id") || null,
+      planned_amount:
+        Number(
+          f.get("planned_amount") || 0
+        ),
+      day_of_month:
+        Number(
+          f.get("day_of_month") || 1
+        ),
+      person_user_id:
+        f.get("person_user_id") || null,
       is_active: true,
-      note: f.get("note") || null,
-      payment_method: f.get("payment_method") || null,
-      merchant: f.get("merchant") || null,
+      note:
+        f.get("note") || null,
+      payment_method:
+        f.get("payment_method") || null,
+      merchant:
+        f.get("merchant") || null,
     };
 
     let result;
@@ -553,9 +777,14 @@ export default function BudgetApp() {
       result = await supabase
         .from("recurring_expenses")
         .update(row)
-        .eq("id", editingRecurring.id);
+        .eq(
+          "id",
+          editingRecurring.id
+        );
     } else {
-      result = await supabase.from("recurring_expenses").insert(row);
+      result = await supabase
+        .from("recurring_expenses")
+        .insert(row);
     }
 
     if (result.error) {
@@ -572,17 +801,31 @@ export default function BudgetApp() {
     await refresh();
   }
 
-  async function deleteRecurring(rec) {
+  /*
+   * =========================================================
+   * DELETE RECURRING
+   * =========================================================
+   */
+
+  async function deleteRecurring(
+    recurringExpense
+  ) {
     const ok = window.confirm(
-      `למחוק את ההוצאה הקבועה "${rec.name}"?\n\nהפעולה תשפיע על החודשים הבאים, אבל לא תמחק חיובים שכבר נרשמו.`
+      `למחוק את ההוצאה הקבועה "${recurringExpense.name}"?\n\nהיא לא תופיע בחודשים הבאים. חיובים שכבר נרשמו יישארו.`
     );
 
     if (!ok) return;
 
-    const { error } = await supabase
-      .from("recurring_expenses")
-      .update({ is_active: false })
-      .eq("id", rec.id);
+    const { error } =
+      await supabase
+        .from("recurring_expenses")
+        .update({
+          is_active: false,
+        })
+        .eq(
+          "id",
+          recurringExpense.id
+        );
 
     if (error) {
       alert(
@@ -596,13 +839,18 @@ export default function BudgetApp() {
   }
 
   /*
-   * ---------------------------------------------------------
-   * CHARGE RECURRING EXPENSE
-   * ---------------------------------------------------------
+   * =========================================================
+   * CHARGE RECURRING
+   * =========================================================
    */
 
-  function openChargeModal(rec) {
-    setChargingRecurring(rec);
+  function openChargeModal(
+    recurringExpense
+  ) {
+    setChargingRecurring(
+      recurringExpense
+    );
+
     setModal("charge");
   }
 
@@ -611,30 +859,52 @@ export default function BudgetApp() {
 
     if (!chargingRecurring) return;
 
-    const f = new FormData(e.currentTarget);
+    const f = new FormData(
+      e.currentTarget
+    );
 
-    const actualAmount = Number(f.get("actual_amount") || 0);
+    const actualAmount =
+      Number(
+        f.get("actual_amount") || 0
+      );
 
-    if (!actualAmount || actualAmount < 0) {
-      alert("יש להזין סכום בפועל.");
+    if (
+      !actualAmount ||
+      actualAmount < 0
+    ) {
+      alert(
+        "יש להזין סכום בפועל."
+      );
       return;
     }
 
     const row = {
       household_id: household.id,
       kind: "expense",
-      description: chargingRecurring.name,
-      category_id: chargingRecurring.category_id || null,
-      transaction_date: f.get("transaction_date"),
-      planned_amount: Number(chargingRecurring.planned_amount || 0),
+      description:
+        chargingRecurring.name,
+      category_id:
+        chargingRecurring.category_id ||
+        null,
+      transaction_date:
+        f.get("transaction_date"),
+      planned_amount:
+        Number(
+          chargingRecurring.planned_amount ||
+            0
+        ),
       completed: true,
-      actual_amount: actualAmount,
+      actual_amount:
+        actualAmount,
       expense_type: "fixed",
       person_user_id:
         f.get("person_user_id") ||
         chargingRecurring.person_user_id ||
         null,
-      note: f.get("note") || chargingRecurring.note || null,
+      note:
+        f.get("note") ||
+        chargingRecurring.note ||
+        null,
       payment_method:
         f.get("payment_method") ||
         chargingRecurring.payment_method ||
@@ -644,15 +914,26 @@ export default function BudgetApp() {
         chargingRecurring.merchant ||
         null,
       credit_card_last4:
-        f.get("payment_method") === "credit_card"
-          ? f.get("credit_card_last4") || null
+        f.get("payment_method") ===
+        "credit_card"
+          ? f.get(
+              "credit_card_last4"
+            ) || null
           : null,
-      recurring_expense_id: chargingRecurring.id,
-      recurring_month: month,
-      created_by: session.user.id,
+      recurring_expense_id:
+        chargingRecurring.id,
+      recurring_month:
+        month,
+      created_by:
+        session.user.id,
+      updated_at:
+        new Date().toISOString(),
     };
 
-    const { error } = await supabase.from("transactions").insert(row);
+    const { error } =
+      await supabase
+        .from("transactions")
+        .insert(row);
 
     if (error) {
       alert(
@@ -669,74 +950,103 @@ export default function BudgetApp() {
   }
 
   /*
-   * ---------------------------------------------------------
-   * CATEGORIES
-   * ---------------------------------------------------------
+   * =========================================================
+   * CATEGORY
+   * =========================================================
    */
 
   async function saveCategory(e) {
     e.preventDefault();
 
-    const f = new FormData(e.currentTarget);
+    const f = new FormData(
+      e.currentTarget
+    );
 
-    const { error } = await supabase.from("categories").insert({
-      household_id: household.id,
-      name: f.get("name"),
-      kind: f.get("kind"),
-      is_active: true,
-    });
+    const { error } =
+      await supabase
+        .from("categories")
+        .insert({
+          household_id: household.id,
+          name: f.get("name"),
+          kind: f.get("kind"),
+          is_active: true,
+        });
 
     if (error) {
-      alert("לא הצלחתי להוסיף קטגוריה.\n\n" + error.message);
+      alert(
+        "לא הצלחתי להוסיף קטגוריה.\n\n" +
+          error.message
+      );
       return;
     }
 
     setModal(null);
+
     await refresh();
   }
 
   /*
-   * ---------------------------------------------------------
-   * LOGIN
-   * ---------------------------------------------------------
+   * =========================================================
+   * LOGIN SCREEN
+   * =========================================================
    */
 
   if (!session) {
     return (
       <main className="auth">
         <div className="authCard">
-          <div className="brandMark">₪</div>
+          <div className="brandMark">
+            ₪
+          </div>
 
           <h1>Kario&apos;s budget</h1>
 
-          <p>התקציב המשפחתי המשותף שלכם</p>
+          <p>
+            התקציב המשפחתי המשותף שלכם
+          </p>
 
-          <form onSubmit={login} className="form">
+          <form
+            onSubmit={login}
+            className="form"
+          >
             <label>
               אימייל
+
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) =>
+                  setEmail(e.target.value)
+                }
                 required
               />
             </label>
 
             <label>
               סיסמה
+
               <input
                 type="password"
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) =>
+                  setPassword(
+                    e.target.value
+                  )
+                }
                 required
               />
             </label>
 
             {authError && (
-              <div className="error">{authError}</div>
+              <div className="error">
+                {authError}
+              </div>
             )}
 
-            <button className="primary" type="submit">
+            <button
+              className="primary"
+              type="submit"
+            >
               כניסה
             </button>
           </form>
@@ -754,24 +1064,35 @@ export default function BudgetApp() {
   }
 
   /*
-   * ---------------------------------------------------------
+   * =========================================================
    * MAIN APP
-   * ---------------------------------------------------------
+   * =========================================================
    */
 
   return (
-    <main className="shell" dir="rtl">
+    <main
+      className="shell"
+      dir="rtl"
+    >
       <header className="topbar">
         <div>
-          <div className="title">Kario&apos;s budget</div>
+          <div className="title">
+            Kario&apos;s budget
+          </div>
 
           <div className="subtitle">
-            {profile?.display_name || "משפחה"} ·{" "}
-            {household?.name || "תקציב משותף"}
+            {profile?.display_name ||
+              "משפחה"}{" "}
+            ·{" "}
+            {household?.name ||
+              "תקציב משותף"}
           </div>
         </div>
 
-        <button className="ghost" onClick={logout}>
+        <button
+          className="ghost"
+          onClick={logout}
+        >
           יציאה
         </button>
       </header>
@@ -782,15 +1103,23 @@ export default function BudgetApp() {
           ["transactions", "תנועות"],
           ["fixed", "הוצאות קבועות"],
           ["categories", "קטגוריות"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            className={tab === id ? "tab active" : "tab"}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+        ].map(
+          ([id, label]) => (
+            <button
+              key={id}
+              className={
+                tab === id
+                  ? "tab active"
+                  : "tab"
+              }
+              onClick={() =>
+                setTab(id)
+              }
+            >
+              {label}
+            </button>
+          )
+        )}
       </nav>
 
       <section className="content">
@@ -804,16 +1133,27 @@ export default function BudgetApp() {
             <div className="monthBar">
               <button
                 onClick={() => {
-                  const d = new Date(month + "-15");
-                  d.setMonth(d.getMonth() - 1);
-                  setMonth(monthKey(d));
+                  const d =
+                    new Date(
+                      month + "-15"
+                    );
+
+                  d.setMonth(
+                    d.getMonth() - 1
+                  );
+
+                  setMonth(
+                    monthKey(d)
+                  );
                 }}
               >
                 ‹
               </button>
 
               <strong>
-                {new Date(month + "-15").toLocaleDateString(
+                {new Date(
+                  month + "-15"
+                ).toLocaleDateString(
                   "he-IL",
                   {
                     month: "long",
@@ -824,18 +1164,27 @@ export default function BudgetApp() {
 
               <button
                 onClick={() => {
-                  const d = new Date(month + "-15");
-                  d.setMonth(d.getMonth() + 1);
-                  setMonth(monthKey(d));
+                  const d =
+                    new Date(
+                      month + "-15"
+                    );
+
+                  d.setMonth(
+                    d.getMonth() + 1
+                  );
+
+                  setMonth(
+                    monthKey(d)
+                  );
                 }}
               >
                 ›
               </button>
             </div>
 
-            {/* -------------------------------------------------
+            {/* =================================================
                 1. BUDGET BALANCE
-               ------------------------------------------------- */}
+               ================================================= */}
 
             <div
               className={
@@ -843,51 +1192,124 @@ export default function BudgetApp() {
                   ? "card balance"
                   : "card balance negative"
               }
-              style={{ marginBottom: 16 }}
+              style={{
+                marginBottom: 16,
+              }}
             >
-              <span>יתרת תקציב</span>
+              <span>
+                יתרת תקציב
+              </span>
 
-              <b>{money(balance)}</b>
+              <b>
+                {money(balance)}
+              </b>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "1fr 1fr",
+                  gap: 12,
+                  marginTop: 14,
+                  paddingTop: 12,
+                  borderTop:
+                    "1px solid rgba(0,0,0,.08)",
+                }}
+              >
+                <div>
+                  <small>
+                    הכנסות בפועל
+                  </small>
+
+                  <strong
+                    className="positive"
+                    style={{
+                      display:
+                        "block",
+                      fontSize: 18,
+                    }}
+                  >
+                    {money(income)}
+                  </strong>
+                </div>
+
+                <div>
+                  <small>
+                    הוצאות בפועל
+                  </small>
+
+                  <strong
+                    className="negative"
+                    style={{
+                      display:
+                        "block",
+                      fontSize: 18,
+                    }}
+                  >
+                    {money(expenses)}
+                  </strong>
+                </div>
+              </div>
 
               <small
                 style={{
                   display: "block",
-                  marginTop: 6,
+                  marginTop: 10,
                   opacity: 0.75,
                 }}
               >
-                הכנסות בפועל פחות הוצאות שחויבו בפועל
+                ההכנסות בפועל פחות
+                ההוצאות שחויבו בפועל
               </small>
             </div>
 
-            {/* -------------------------------------------------
-                2. FIXED EXPENSES: CHARGED VS EXPECTED
-               ------------------------------------------------- */}
+            {/* =================================================
+                2. FIXED EXPENSES
+               ================================================= */}
 
             <div
               className="panel"
-              style={{ marginBottom: 16 }}
+              style={{
+                marginBottom: 16,
+              }}
             >
-              <h2>כמה נשאר מהוצאות קבועות</h2>
+              <h2>
+                כמה נשאר מהוצאות
+                קבועות
+              </h2>
 
               <div className="row">
-                <span>חויב עד עכשיו</span>
+                <span>
+                  חויב עד עכשיו
+                </span>
 
-                <b>{money(fixedCharged)}</b>
+                <b>
+                  {money(
+                    fixedCharged
+                  )}
+                </b>
               </div>
 
               <div className="row">
-                <span>צפוי לחיוב</span>
+                <span>
+                  צפוי לחיוב
+                </span>
 
-                <b>{money(pendingFixed)}</b>
+                <b>
+                  {money(
+                    pendingFixed
+                  )}
+                </b>
               </div>
 
               <div
                 style={{
                   height: 16,
                   borderRadius: 999,
-                  overflow: "hidden",
-                  background: "#e9eaf0",
+                  overflow:
+                    "hidden",
+                  background:
+                    "#e9eaf0",
                   marginTop: 16,
                   display: "flex",
                 }}
@@ -895,15 +1317,18 @@ export default function BudgetApp() {
                 <div
                   style={{
                     width: `${fixedProgress}%`,
-                    background: "#5964d8",
-                    transition: "width .25s",
+                    background:
+                      "#5964d8",
+                    transition:
+                      "width .25s",
                   }}
                 />
 
                 <div
                   style={{
                     flex: 1,
-                    background: "#f0b35a",
+                    background:
+                      "#f0b35a",
                   }}
                 />
               </div>
@@ -911,17 +1336,25 @@ export default function BudgetApp() {
               <div
                 style={{
                   display: "flex",
-                  justifyContent: "space-between",
+                  justifyContent:
+                    "space-between",
                   marginTop: 10,
                   fontSize: 13,
+                  gap: 10,
                 }}
               >
                 <span>
-                  🟣 חויבו: {money(fixedCharged)}
+                  🟣 חויבו:{" "}
+                  {money(
+                    fixedCharged
+                  )}
                 </span>
 
                 <span>
-                  🟠 נשארו: {money(pendingFixed)}
+                  🟠 נשארו:{" "}
+                  {money(
+                    pendingFixed
+                  )}
                 </span>
               </div>
 
@@ -930,31 +1363,45 @@ export default function BudgetApp() {
                 style={{
                   marginTop: 14,
                   paddingTop: 12,
-                  borderTop: "1px solid #eee",
+                  borderTop:
+                    "1px solid #eee",
                 }}
               >
-                <span>סה״כ הוצאות קבועות מתוכננות</span>
+                <span>
+                  סה״כ הוצאות קבועות
+                  מתוכננות
+                </span>
 
-                <b>{money(fixedPlanned)}</b>
+                <b>
+                  {money(
+                    fixedPlanned
+                  )}
+                </b>
               </div>
             </div>
 
-            {/* -------------------------------------------------
+            {/* =================================================
                 3. FIXED VS VARIABLE
-               ------------------------------------------------- */}
+               ================================================= */}
 
             <div
               className="panel"
-              style={{ marginBottom: 16 }}
+              style={{
+                marginBottom: 16,
+              }}
             >
-              <h2>קבועות מול משתנות</h2>
+              <h2>
+                קבועות מול משתנות
+              </h2>
 
               <div
                 style={{
                   height: 18,
                   borderRadius: 999,
-                  overflow: "hidden",
-                  background: "#e9eaf0",
+                  overflow:
+                    "hidden",
+                  background:
+                    "#e9eaf0",
                   marginTop: 16,
                   display: "flex",
                 }}
@@ -962,16 +1409,16 @@ export default function BudgetApp() {
                 <div
                   style={{
                     width: `${fixedPercent}%`,
-                    background: "#5964d8",
-                    transition: "width .25s",
+                    background:
+                      "#5964d8",
                   }}
                 />
 
                 <div
                   style={{
                     width: `${variablePercent}%`,
-                    background: "#78b9a4",
-                    transition: "width .25s",
+                    background:
+                      "#78b9a4",
                   }}
                 />
               </div>
@@ -979,146 +1426,219 @@ export default function BudgetApp() {
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 12,
+                  gridTemplateColumns:
+                    "1fr 1fr",
+                  gap: 20,
                   marginTop: 16,
                 }}
               >
                 <div>
-                  <div style={{ fontSize: 13 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                    }}
+                  >
                     <span
                       style={{
-                        display: "inline-block",
+                        display:
+                          "inline-block",
                         width: 10,
                         height: 10,
-                        borderRadius: "50%",
-                        background: "#5964d8",
+                        borderRadius:
+                          "50%",
+                        background:
+                          "#5964d8",
                         marginLeft: 6,
                       }}
                     />
+
                     קבועות
                   </div>
 
-                  <b>{money(fixedCharged)}</b>
+                  <b>
+                    {money(
+                      fixedCharged
+                    )}
+                  </b>
 
                   <small
                     className="muted"
-                    style={{ display: "block" }}
+                    style={{
+                      display:
+                        "block",
+                    }}
                   >
-                    {fixedPercent.toFixed(0)}%
+                    {fixedPercent.toFixed(
+                      0
+                    )}
+                    %
                   </small>
                 </div>
 
-                <div style={{ textAlign: "left" }}>
-                  <div style={{ fontSize: 13 }}>
+                <div
+                  style={{
+                    textAlign:
+                      "left",
+                  }}
+                >
+                  <div
+                    style={{
+                      fontSize: 13,
+                    }}
+                  >
                     משתנות
+
                     <span
                       style={{
-                        display: "inline-block",
+                        display:
+                          "inline-block",
                         width: 10,
                         height: 10,
-                        borderRadius: "50%",
-                        background: "#78b9a4",
+                        borderRadius:
+                          "50%",
+                        background:
+                          "#78b9a4",
                         marginRight: 6,
                       }}
                     />
                   </div>
 
-                  <b>{money(variableExpenses)}</b>
+                  <b>
+                    {money(
+                      variableExpenses
+                    )}
+                  </b>
 
                   <small
                     className="muted"
-                    style={{ display: "block" }}
+                    style={{
+                      display:
+                        "block",
+                    }}
                   >
-                    {variablePercent.toFixed(0)}%
+                    {variablePercent.toFixed(
+                      0
+                    )}
+                    %
                   </small>
                 </div>
               </div>
             </div>
 
-            {/* -------------------------------------------------
+            {/* =================================================
                 4. CATEGORY BREAKDOWN
-               ------------------------------------------------- */}
+               ================================================= */}
 
             <div className="panel">
-              <h2>פירוט הוצאות לפי סוג</h2>
+              <h2>
+                פירוט הוצאות לפי
+                סוג
+              </h2>
 
-              {categoryBreakdown.length === 0 ? (
+              {categoryBreakdown.length ===
+              0 ? (
                 <p className="muted">
-                  אין עדיין הוצאות שחויבו בחודש הזה.
+                  אין עדיין הוצאות
+                  שחויבו בחודש הזה.
                 </p>
               ) : (
-                <div style={{ marginTop: 8 }}>
-                  {categoryBreakdown.map((category) => (
-                    <div
-                      key={category.id}
-                      style={{
-                        padding: "13px 0",
-                        borderBottom: "1px solid #eee",
-                      }}
-                    >
+                <div
+                  style={{
+                    marginTop: 8,
+                  }}
+                >
+                  {categoryBreakdown.map(
+                    (category) => (
                       <div
+                        key={category.id}
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          gap: 10,
-                        }}
-                      >
-                        <b>{category.name}</b>
-
-                        <b>{money(category.amount)}</b>
-                      </div>
-
-                      <div
-                        style={{
-                          height: 8,
-                          borderRadius: 999,
-                          background: "#ececf2",
-                          overflow: "hidden",
-                          marginTop: 8,
+                          padding:
+                            "13px 0",
+                          borderBottom:
+                            "1px solid #eee",
                         }}
                       >
                         <div
                           style={{
-                            width: `${Math.min(
-                              100,
-                              category.percent
-                            )}%`,
-                            height: "100%",
-                            background: "#5964d8",
+                            display:
+                              "flex",
+                            justifyContent:
+                              "space-between",
+                            alignItems:
+                              "center",
+                            gap: 10,
                           }}
-                        />
-                      </div>
+                        >
+                          <b>
+                            {
+                              category.name
+                            }
+                          </b>
 
-                      <small className="muted">
-                        {category.percent.toFixed(0)}% מהוצאות החודש
-                      </small>
-                    </div>
-                  ))}
+                          <b>
+                            {money(
+                              category.amount
+                            )}
+                          </b>
+                        </div>
+
+                        <div
+                          style={{
+                            height: 8,
+                            borderRadius:
+                              999,
+                            background:
+                              "#ececf2",
+                            overflow:
+                              "hidden",
+                            marginTop: 8,
+                          }}
+                        >
+                          <div
+                            style={{
+                              width: `${Math.min(
+                                100,
+                                category.percent
+                              )}%`,
+                              height:
+                                "100%",
+                              background:
+                                "#5964d8",
+                            }}
+                          />
+                        </div>
+
+                        <small className="muted">
+                          {category.percent.toFixed(
+                            0
+                          )}
+                          % מהוצאות
+                          החודש
+                        </small>
+                      </div>
+                    )
+                  )}
                 </div>
               )}
-            </div>
 
-            {/* MONTH SUMMARY */}
+              <div
+                className="row"
+                style={{
+                  marginTop: 14,
+                  paddingTop: 12,
+                  borderTop:
+                    "1px solid #eee",
+                }}
+              >
+                <span>
+                  מתוכנן להוצאות
+                </span>
 
-            <div
-              className="cards"
-              style={{ marginTop: 16 }}
-            >
-              <div className="card income">
-                <span>הכנסות בפועל</span>
-                <b>{money(income)}</b>
-              </div>
-
-              <div className="card expense">
-                <span>הוצאות בפועל</span>
-                <b>{money(expenses)}</b>
-              </div>
-
-              <div className="card">
-                <span>מתוכנן להוצאות</span>
-                <b>{money(plannedExpenses)}</b>
+                <b>
+                  {money(
+                    plannedExpenses
+                  )}
+                </b>
               </div>
             </div>
           </>
@@ -1135,7 +1655,9 @@ export default function BudgetApp() {
 
               <button
                 className="primary small"
-                onClick={() => openTransactionModal()}
+                onClick={() =>
+                  openTransactionModal()
+                }
               >
                 + הוספת תנועה
               </button>
@@ -1145,52 +1667,88 @@ export default function BudgetApp() {
               <input
                 type="month"
                 value={month}
-                onChange={(e) => setMonth(e.target.value)}
+                onChange={(e) =>
+                  setMonth(
+                    e.target.value
+                  )
+                }
               />
             </div>
 
-            {currentTx.length === 0 ? (
+            {currentTx.length ===
+            0 ? (
               <p className="muted">
-                אין תנועות בחודש הזה.
+                אין תנועות בחודש
+                הזה.
               </p>
             ) : (
               <div className="txList">
                 {currentTx.map((t) => {
-                  const category = categories.find(
-                    (c) => c.id === t.category_id
-                  );
+                  const category =
+                    categories.find(
+                      (c) =>
+                        c.id ===
+                        t.category_id
+                    );
 
-                  const member = members.find(
-                    (m) => m.user_id === t.person_user_id
-                  );
+                  const member =
+                    members.find(
+                      (m) =>
+                        m.user_id ===
+                        t.person_user_id
+                    );
 
                   return (
                     <div
                       className="tx"
                       key={t.id}
                       style={{
-                        alignItems: "center",
+                        alignItems:
+                          "center",
                       }}
                     >
-                      <div style={{ minWidth: 0 }}>
-                        <b>{t.description}</b>
+                      <div
+                        style={{
+                          minWidth: 0,
+                        }}
+                      >
+                        <b>
+                          {
+                            t.description
+                          }
+                        </b>
 
                         <small
                           style={{
-                            display: "block",
-                            lineHeight: 1.6,
+                            display:
+                              "block",
+                            lineHeight:
+                              1.7,
                           }}
                         >
-                          {t.transaction_date}
+                          {
+                            t.transaction_date
+                          }
+
                           {" · "}
-                          {category?.name || "ללא קטגוריה"}
+
+                          {category?.name ||
+                            "ללא קטגוריה"}
 
                           {t.expense_type && (
                             <>
                               {" · "}
-                              {t.expense_type === "fixed"
-                                ? "קבועה"
-                                : "משתנה"}
+
+                              {t.kind ===
+                              "income"
+                                ? t.expense_type ===
+                                  "fixed"
+                                  ? "הכנסה קבועה"
+                                  : "הכנסה משתנה"
+                                : t.expense_type ===
+                                  "fixed"
+                                ? "הוצאה קבועה"
+                                : "הוצאה משתנה"}
                             </>
                           )}
 
@@ -1213,14 +1771,19 @@ export default function BudgetApp() {
                           {t.credit_card_last4 && (
                             <>
                               {" · "}
-                              **** {t.credit_card_last4}
+                              ****{" "}
+                              {
+                                t.credit_card_last4
+                              }
                             </>
                           )}
 
                           {member?.display_name && (
                             <>
                               {" · "}
-                              {member.display_name}
+                              {
+                                member.display_name
+                              }
                             </>
                           )}
                         </small>
@@ -1228,18 +1791,21 @@ export default function BudgetApp() {
 
                       <div
                         style={{
-                          textAlign: "left",
+                          textAlign:
+                            "left",
                           flexShrink: 0,
                         }}
                       >
                         <strong
                           className={
-                            t.kind === "income"
+                            t.kind ===
+                            "income"
                               ? "positive"
                               : "negative"
                           }
                         >
-                          {t.kind === "income"
+                          {t.kind ===
+                          "income"
                             ? "+"
                             : "−"}{" "}
                           {money(
@@ -1250,17 +1816,19 @@ export default function BudgetApp() {
 
                         <div
                           style={{
-                            display: "flex",
+                            display:
+                              "flex",
                             gap: 6,
                             marginTop: 5,
-                            justifyContent: "flex-start",
                           }}
                         >
                           <button
                             type="button"
                             className="ghost small"
                             onClick={() =>
-                              openTransactionModal(t)
+                              openTransactionModal(
+                                t
+                              )
                             }
                           >
                             עריכה
@@ -1270,7 +1838,9 @@ export default function BudgetApp() {
                             type="button"
                             className="ghost small"
                             onClick={() =>
-                              deleteTransaction(t)
+                              deleteTransaction(
+                                t
+                              )
                             }
                           >
                             מחיקה
@@ -1292,160 +1862,208 @@ export default function BudgetApp() {
         {tab === "fixed" && (
           <div className="panel">
             <div className="panelHead">
-              <h2>הוצאות קבועות</h2>
+              <h2>
+                הוצאות קבועות
+              </h2>
 
               <button
                 className="primary small"
-                onClick={() => openRecurringModal()}
+                onClick={() =>
+                  openRecurringModal()
+                }
               >
                 + הוצאה קבועה
               </button>
             </div>
 
-            {recurring.length === 0 ? (
+            {recurring.length ===
+            0 ? (
               <p className="muted">
-                אין הוצאות קבועות עדיין.
+                אין הוצאות קבועות
+                עדיין.
               </p>
             ) : (
               <div>
-                {recurring.map((r) => {
-                  const monthly = recurringForMonth.find(
-                    (x) => x.id === r.id
-                  );
+                {recurring.map(
+                  (r) => {
+                    const monthly =
+                      recurringForMonth.find(
+                        (x) =>
+                          x.id === r.id
+                      );
 
-                  const category = categories.find(
-                    (c) => c.id === r.category_id
-                  );
+                    const category =
+                      categories.find(
+                        (c) =>
+                          c.id ===
+                          r.category_id
+                      );
 
-                  const member = members.find(
-                    (m) => m.user_id === r.person_user_id
-                  );
+                    const member =
+                      members.find(
+                        (m) =>
+                          m.user_id ===
+                          r.person_user_id
+                      );
 
-                  return (
-                    <div
-                      className="listRow"
-                      key={r.id}
-                      style={{
-                        display: "block",
-                        padding: "15px 0",
-                      }}
-                    >
+                    return (
                       <div
+                        className="listRow"
+                        key={r.id}
                         style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          gap: 12,
+                          display:
+                            "block",
+                          padding:
+                            "15px 0",
                         }}
                       >
-                        <div>
-                          <b>{r.name}</b>
+                        <div
+                          style={{
+                            display:
+                              "flex",
+                            justifyContent:
+                              "space-between",
+                            gap: 12,
+                          }}
+                        >
+                          <div>
+                            <b>
+                              {r.name}
+                            </b>
 
-                          <small
-                            style={{
-                              display: "block",
-                              lineHeight: 1.7,
-                            }}
-                          >
-                            יום {r.day_of_month}
-                            {" · "}
-                            {category?.name ||
-                              "ללא קטגוריה"}
+                            <small
+                              style={{
+                                display:
+                                  "block",
+                                lineHeight:
+                                  1.7,
+                              }}
+                            >
+                              יום{" "}
+                              {
+                                r.day_of_month
+                              }
 
-                            {r.merchant && (
-                              <>
-                                {" · "}
-                                {r.merchant}
-                              </>
-                            )}
+                              {" · "}
 
-                            {r.payment_method && (
-                              <>
-                                {" · "}
-                                {paymentLabel(
-                                  r.payment_method
-                                )}
-                              </>
-                            )}
+                              {category?.name ||
+                                "ללא קטגוריה"}
 
-                            {member?.display_name && (
-                              <>
-                                {" · "}
-                                {member.display_name}
-                              </>
-                            )}
-                          </small>
-                        </div>
+                              {r.merchant && (
+                                <>
+                                  {" · "}
+                                  {
+                                    r.merchant
+                                  }
+                                </>
+                              )}
 
-                        <b>
-                          {money(r.planned_amount)}
-                        </b>
-                      </div>
+                              {r.payment_method && (
+                                <>
+                                  {" · "}
+                                  {paymentLabel(
+                                    r.payment_method
+                                  )}
+                                </>
+                              )}
 
-                      <div
-                        style={{
-                          marginTop: 10,
-                          display: "flex",
-                          alignItems: "center",
-                          justifyContent: "space-between",
-                          gap: 8,
-                          flexWrap: "wrap",
-                        }}
-                      >
-                        {monthly?.charged ? (
-                          <span
-                            style={{
-                              fontSize: 13,
-                              fontWeight: 600,
-                            }}
-                          >
-                            ✓ חויב החודש:{" "}
+                              {member?.display_name && (
+                                <>
+                                  {" · "}
+                                  {
+                                    member.display_name
+                                  }
+                                </>
+                              )}
+                            </small>
+                          </div>
+
+                          <b>
                             {money(
-                              monthly.chargedTransaction
-                                ?.actual_amount
+                              r.planned_amount
                             )}
-                          </span>
-                        ) : (
-                          <button
-                            type="button"
-                            className="primary small"
-                            onClick={() =>
-                              openChargeModal(r)
-                            }
-                          >
-                            סימון כחויב
-                          </button>
-                        )}
+                          </b>
+                        </div>
 
                         <div
                           style={{
-                            display: "flex",
-                            gap: 6,
+                            marginTop: 10,
+                            display:
+                              "flex",
+                            alignItems:
+                              "center",
+                            justifyContent:
+                              "space-between",
+                            gap: 8,
+                            flexWrap:
+                              "wrap",
                           }}
                         >
-                          <button
-                            type="button"
-                            className="ghost small"
-                            onClick={() =>
-                              openRecurringModal(r)
-                            }
-                          >
-                            עריכה
-                          </button>
+                          {monthly?.charged ? (
+                            <span
+                              style={{
+                                fontSize: 13,
+                                fontWeight:
+                                  600,
+                              }}
+                            >
+                              ✓ חויב החודש:{" "}
+                              {money(
+                                monthly
+                                  .chargedTransaction
+                                  ?.actual_amount
+                              )}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              className="primary small"
+                              onClick={() =>
+                                openChargeModal(
+                                  r
+                                )
+                              }
+                            >
+                              סימון כחויב
+                            </button>
+                          )}
 
-                          <button
-                            type="button"
-                            className="ghost small"
-                            onClick={() =>
-                              deleteRecurring(r)
-                            }
+                          <div
+                            style={{
+                              display:
+                                "flex",
+                              gap: 6,
+                            }}
                           >
-                            מחיקה
-                          </button>
+                            <button
+                              type="button"
+                              className="ghost small"
+                              onClick={() =>
+                                openRecurringModal(
+                                  r
+                                )
+                              }
+                            >
+                              עריכה
+                            </button>
+
+                            <button
+                              type="button"
+                              className="ghost small"
+                              onClick={() =>
+                                deleteRecurring(
+                                  r
+                                )
+                              }
+                            >
+                              מחיקה
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  }
+                )}
               </div>
             )}
           </div>
@@ -1462,39 +2080,48 @@ export default function BudgetApp() {
 
               <button
                 className="primary small"
-                onClick={() => setModal("category")}
+                onClick={() =>
+                  setModal("category")
+                }
               >
                 + קטגוריה
               </button>
             </div>
 
             <div className="categoryGrid">
-              {categories.map((c) => (
-                <div
-                  className="category"
-                  key={c.id}
-                >
-                  <span>{c.name}</span>
+              {categories.map(
+                (c) => (
+                  <div
+                    className="category"
+                    key={c.id}
+                  >
+                    <span>
+                      {c.name}
+                    </span>
 
-                  <small>
-                    {c.kind === "income"
-                      ? "הכנסה"
-                      : c.kind === "expense"
-                      ? "הוצאה"
-                      : "שניהם"}
-                  </small>
-                </div>
-              ))}
+                    <small>
+                      {c.kind ===
+                      "income"
+                        ? "הכנסה"
+                        : c.kind ===
+                          "expense"
+                        ? "הוצאה"
+                        : "שניהם"}
+                    </small>
+                  </div>
+                )
+              )}
             </div>
           </div>
         )}
       </section>
 
-      {/* =====================================================
+      {/* =======================================================
           TRANSACTION MODAL
-         ===================================================== */}
+         ======================================================= */}
 
-      {modal === "transaction" && (
+      {modal ===
+        "transaction" && (
         <Modal
           title={
             editingTransaction
@@ -1502,16 +2129,24 @@ export default function BudgetApp() {
               : "הוספת תנועה"
           }
           onClose={() => {
-            setEditingTransaction(null);
+            setEditingTransaction(
+              null
+            );
             setModal(null);
           }}
         >
           <form
             className="form"
-            onSubmit={saveTransaction}
+            onSubmit={
+              saveTransaction
+            }
             onChange={(e) => {
-              if (!editingTransaction) {
-                saveDraftFromForm(e.currentTarget);
+              if (
+                !editingTransaction
+              ) {
+                saveDraftFromForm(
+                  e.currentTarget
+                );
               }
             }}
           >
@@ -1520,9 +2155,13 @@ export default function BudgetApp() {
 
               <select
                 name="kind"
-                value={transactionKind}
+                value={
+                  transactionKind
+                }
                 onChange={(e) =>
-                  setTransactionKind(e.target.value)
+                  setTransactionKind(
+                    e.target.value
+                  )
                 }
               >
                 <option value="expense">
@@ -1569,7 +2208,8 @@ export default function BudgetApp() {
                 {categories
                   .filter(
                     (c) =>
-                      c.kind === transactionKind ||
+                      c.kind ===
+                        transactionKind ||
                       c.kind === "both"
                   )
                   .map((c) => (
@@ -1634,28 +2274,50 @@ export default function BudgetApp() {
               />
             </label>
 
-            <label>
-              {transactionKind === "expense"
-                ? "סוג הוצאה"
-                : "סוג הכנסה"}
+            {transactionKind ===
+              "expense" ? (
+              <label>
+                סוג הוצאה
 
-              <select
-                name="expense_type"
-                defaultValue={
-                  editingTransaction?.expense_type ??
-                  draft?.expense_type ??
-                  "variable"
-                }
-              >
-                <option value="variable">
-                  משתנה
-                </option>
+                <select
+                  name="expense_type"
+                  defaultValue={
+                    editingTransaction?.expense_type ??
+                    draft?.expense_type ??
+                    "variable"
+                  }
+                >
+                  <option value="variable">
+                    משתנה
+                  </option>
 
-                <option value="fixed">
-                  קבועה
-                </option>
-              </select>
-            </label>
+                  <option value="fixed">
+                    קבועה
+                  </option>
+                </select>
+              </label>
+            ) : (
+              <label>
+                סוג הכנסה
+
+                <select
+                  name="income_type"
+                  defaultValue={
+                    editingTransaction?.expense_type ??
+                    draft?.income_type ??
+                    "variable"
+                  }
+                >
+                  <option value="variable">
+                    משתנה
+                  </option>
+
+                  <option value="fixed">
+                    קבועה
+                  </option>
+                </select>
+              </label>
+            )}
 
             <label>
               אמצעי תשלום
@@ -1686,7 +2348,7 @@ export default function BudgetApp() {
             </label>
 
             <label>
-              בית עסק
+              בית עסק / מקור הכנסה
 
               <input
                 name="merchant"
@@ -1695,12 +2357,18 @@ export default function BudgetApp() {
                   draft?.merchant ??
                   ""
                 }
-                placeholder="למשל: שופרסל"
+                placeholder={
+                  transactionKind ===
+                  "income"
+                    ? "למשל: משכורת"
+                    : "למשל: שופרסל"
+                }
               />
             </label>
 
             <label>
-              4 ספרות אחרונות של האשראי
+              4 ספרות אחרונות של
+              האשראי
 
               <input
                 name="credit_card_last4"
@@ -1730,14 +2398,19 @@ export default function BudgetApp() {
                   לא צוין
                 </option>
 
-                {members.map((m) => (
-                  <option
-                    key={m.user_id}
-                    value={m.user_id}
-                  >
-                    {m.display_name || "משתמש"}
-                  </option>
-                ))}
+                {members.map(
+                  (m) => (
+                    <option
+                      key={m.user_id}
+                      value={
+                        m.user_id
+                      }
+                    >
+                      {m.display_name ||
+                        "משתמש"}
+                    </option>
+                  )
+                )}
               </select>
             </label>
 
@@ -1749,7 +2422,8 @@ export default function BudgetApp() {
                   editingTransaction
                     ? editingTransaction.completed ===
                       true
-                    : draft?.completed !== false
+                    : draft?.completed !==
+                      false
                 }
               />
 
@@ -1772,9 +2446,9 @@ export default function BudgetApp() {
 
             <div
               style={{
-                display: "flex",
+                display:
+                  "flex",
                 gap: 8,
-                marginTop: 4,
               }}
             >
               <button
@@ -1788,8 +2462,10 @@ export default function BudgetApp() {
                 className="ghost"
                 type="button"
                 onClick={() => {
-                  clearDraft();
-                  setEditingTransaction(null);
+                  setEditingTransaction(
+                    null
+                  );
+
                   setModal(null);
                 }}
               >
@@ -1800,11 +2476,12 @@ export default function BudgetApp() {
         </Modal>
       )}
 
-      {/* =====================================================
+      {/* =======================================================
           RECURRING MODAL
-         ===================================================== */}
+         ======================================================= */}
 
-      {modal === "recurring" && (
+      {modal ===
+        "recurring" && (
         <Modal
           title={
             editingRecurring
@@ -1812,13 +2489,18 @@ export default function BudgetApp() {
               : "הוספת הוצאה קבועה"
           }
           onClose={() => {
-            setEditingRecurring(null);
+            setEditingRecurring(
+              null
+            );
+
             setModal(null);
           }}
         >
           <form
             className="form"
-            onSubmit={saveRecurring}
+            onSubmit={
+              saveRecurring
+            }
           >
             <label>
               שם ההוצאה
@@ -1827,7 +2509,8 @@ export default function BudgetApp() {
                 name="name"
                 placeholder="למשל: משכנתא"
                 defaultValue={
-                  editingRecurring?.name || ""
+                  editingRecurring?.name ||
+                  ""
                 }
                 required
               />
@@ -1839,7 +2522,8 @@ export default function BudgetApp() {
               <select
                 name="category_id"
                 defaultValue={
-                  editingRecurring?.category_id || ""
+                  editingRecurring?.category_id ||
+                  ""
                 }
               >
                 <option value="">
@@ -1848,7 +2532,9 @@ export default function BudgetApp() {
 
                 {categories
                   .filter(
-                    (c) => c.kind !== "income"
+                    (c) =>
+                      c.kind !==
+                      "income"
                   )
                   .map((c) => (
                     <option
@@ -1949,14 +2635,19 @@ export default function BudgetApp() {
                   לא צוין
                 </option>
 
-                {members.map((m) => (
-                  <option
-                    key={m.user_id}
-                    value={m.user_id}
-                  >
-                    {m.display_name || "משתמש"}
-                  </option>
-                ))}
+                {members.map(
+                  (m) => (
+                    <option
+                      key={m.user_id}
+                      value={
+                        m.user_id
+                      }
+                    >
+                      {m.display_name ||
+                        "משתמש"}
+                    </option>
+                  )
+                )}
               </select>
             </label>
 
@@ -1967,7 +2658,8 @@ export default function BudgetApp() {
                 name="note"
                 rows="3"
                 defaultValue={
-                  editingRecurring?.note || ""
+                  editingRecurring?.note ||
+                  ""
                 }
               />
             </label>
@@ -1982,29 +2674,34 @@ export default function BudgetApp() {
         </Modal>
       )}
 
-      {/* =====================================================
-          RECURRING CHARGE MODAL
-         ===================================================== */}
+      {/* =======================================================
+          CHARGE RECURRING MODAL
+         ======================================================= */}
 
       {modal === "charge" &&
         chargingRecurring && (
           <Modal
             title={`חיוב: ${chargingRecurring.name}`}
             onClose={() => {
-              setChargingRecurring(null);
+              setChargingRecurring(
+                null
+              );
+
               setModal(null);
             }}
           >
             <form
               className="form"
-              onSubmit={saveRecurringCharge}
+              onSubmit={
+                saveRecurringCharge
+              }
             >
               <div
                 style={{
                   padding: 12,
                   borderRadius: 10,
-                  background: "#f6f6f8",
-                  marginBottom: 4,
+                  background:
+                    "#f6f6f8",
                 }}
               >
                 <div className="muted">
@@ -2028,7 +2725,9 @@ export default function BudgetApp() {
                 <input
                   name="transaction_date"
                   type="date"
-                  defaultValue={todayKey()}
+                  defaultValue={
+                    todayKey()
+                  }
                   required
                 />
               </label>
@@ -2088,7 +2787,8 @@ export default function BudgetApp() {
               </label>
 
               <label>
-                4 ספרות אחרונות של האשראי
+                4 ספרות אחרונות של
+                האשראי
 
                 <input
                   name="credit_card_last4"
@@ -2112,14 +2812,19 @@ export default function BudgetApp() {
                     לא צוין
                   </option>
 
-                  {members.map((m) => (
-                    <option
-                      key={m.user_id}
-                      value={m.user_id}
-                    >
-                      {m.display_name || "משתמש"}
-                    </option>
-                  ))}
+                  {members.map(
+                    (m) => (
+                      <option
+                        key={m.user_id}
+                        value={
+                          m.user_id
+                        }
+                      >
+                        {m.display_name ||
+                          "משתמש"}
+                      </option>
+                    )
+                  )}
                 </select>
               </label>
 
@@ -2130,7 +2835,8 @@ export default function BudgetApp() {
                   name="note"
                   rows="3"
                   defaultValue={
-                    chargingRecurring.note || ""
+                    chargingRecurring.note ||
+                    ""
                   }
                 />
               </label>
@@ -2145,18 +2851,22 @@ export default function BudgetApp() {
           </Modal>
         )}
 
-      {/* =====================================================
+      {/* =======================================================
           CATEGORY MODAL
-         ===================================================== */}
+         ======================================================= */}
 
       {modal === "category" && (
         <Modal
           title="קטגוריה חדשה"
-          onClose={() => setModal(null)}
+          onClose={() =>
+            setModal(null)
+          }
         >
           <form
             className="form"
-            onSubmit={saveCategory}
+            onSubmit={
+              saveCategory
+            }
           >
             <label>
               שם הקטגוריה
