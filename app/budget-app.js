@@ -44,7 +44,36 @@ const paymentLabel = (value) =>
     ([id]) => id === value
   )?.[1] || "";
 
-function Modal({ title, children, onClose }) {
+/*
+ * =========================================================
+ * ONE SOURCE OF TRUTH:
+ * IS AN EXPENSE FIXED OR VARIABLE?
+ *
+ * Fixed if:
+ * 1. It is explicitly marked fixed
+ * OR
+ * 2. It is linked to a recurring expense.
+ *
+ * Variable otherwise.
+ * =========================================================
+ */
+
+const isFixedExpense = (transaction) =>
+  transaction?.kind === "expense" &&
+  (
+    transaction.expense_type === "fixed" ||
+    Boolean(transaction.recurring_expense_id)
+  );
+
+const isVariableExpense = (transaction) =>
+  transaction?.kind === "expense" &&
+  !isFixedExpense(transaction);
+
+function Modal({
+  title,
+  children,
+  onClose,
+}) {
   return (
     <div
       className="modalBackdrop"
@@ -152,12 +181,16 @@ export default function BudgetApp() {
   async function loadData(userId) {
     setLoading(true);
 
-    const { data: hm, error: hmError } =
-      await supabase
-        .from("household_members")
-        .select("household_id, role")
-        .eq("user_id", userId)
-        .maybeSingle();
+    const {
+      data: hm,
+      error: hmError,
+    } = await supabase
+      .from("household_members")
+      .select(
+        "household_id, role"
+      )
+      .eq("user_id", userId)
+      .maybeSingle();
 
     if (hmError || !hm) {
       setLoading(false);
@@ -201,19 +234,29 @@ export default function BudgetApp() {
           "household_id",
           hm.household_id
         )
-        .order("transaction_date", {
-          ascending: false,
-        }),
+        .order(
+          "transaction_date",
+          {
+            ascending: false,
+          }
+        ),
 
       supabase
-        .from("recurring_expenses")
+        .from(
+          "recurring_expenses"
+        )
         .select("*")
         .eq(
           "household_id",
           hm.household_id
         )
-        .eq("is_active", true)
-        .order("day_of_month"),
+        .eq(
+          "is_active",
+          true
+        )
+        .order(
+          "day_of_month"
+        ),
 
       supabase.rpc(
         "get_my_household_members"
@@ -263,13 +306,17 @@ export default function BudgetApp() {
       });
 
     const {
-      data: { subscription },
+      data: {
+        subscription,
+      },
     } =
       supabase.auth.onAuthStateChange(
         (_event, newSession) => {
           setSession(newSession);
 
-          if (newSession?.user) {
+          if (
+            newSession?.user
+          ) {
             loadData(
               newSession.user.id
             );
@@ -334,49 +381,53 @@ export default function BudgetApp() {
 
   const currentTx = useMemo(
     () =>
-      transactions.filter((t) =>
-        String(
-          t.transaction_date || ""
-        ).startsWith(month)
+      transactions.filter(
+        (t) =>
+          String(
+            t.transaction_date ||
+              ""
+          ).startsWith(month)
       ),
     [transactions, month]
   );
 
   /*
    * =========================================================
-   * RECURRING EXPENSES FOR MONTH
-   *
-   * A recurring expense is a monthly plan.
-   * It becomes an actual expense only when
-   * a real transaction is linked to it.
+   * RECURRING EXPENSES FOR CURRENT MONTH
    * =========================================================
    */
 
   const recurringForMonth =
     useMemo(() => {
-      return recurring.map((r) => {
-        const linkedTransaction =
-          transactions.find(
-            (t) =>
-              t.recurring_expense_id ===
-                r.id &&
-              t.recurring_month ===
-                month &&
-              t.kind === "expense" &&
-              t.completed === true &&
-              t.actual_amount !== null
-          );
+      return recurring.map(
+        (r) => {
+          const linkedTransaction =
+            transactions.find(
+              (t) =>
+                t.recurring_expense_id ===
+                  r.id &&
+                t.recurring_month ===
+                  month &&
+                t.kind ===
+                  "expense" &&
+                t.completed ===
+                  true &&
+                t.actual_amount !==
+                  null
+            );
 
-        return {
-          ...r,
-          chargedTransaction:
-            linkedTransaction || null,
-          charged:
-            Boolean(
-              linkedTransaction
-            ),
-        };
-      });
+          return {
+            ...r,
+            chargedTransaction:
+              linkedTransaction ||
+              null,
+            charged:
+              Boolean(
+                linkedTransaction
+              ),
+          };
+        }
+      );
     }, [
       recurring,
       transactions,
@@ -385,11 +436,7 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * INCOME
-   *
-   * Actual amount wins.
-   * If actual amount is empty, use planned amount
-   * for a completed income.
+   * ACTUAL INCOME
    * =========================================================
    */
 
@@ -398,8 +445,10 @@ export default function BudgetApp() {
       currentTx
         .filter(
           (t) =>
-            t.kind === "income" &&
-            t.completed === true
+            t.kind ===
+              "income" &&
+            t.completed ===
+              true
         )
         .reduce(
           (sum, t) =>
@@ -420,38 +469,36 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  const expenses = useMemo(
-    () =>
-      currentTx
-        .filter(
-          (t) =>
-            t.kind === "expense" &&
-            t.completed === true &&
-            t.actual_amount !== null
-        )
-        .reduce(
-          (sum, t) =>
-            sum +
-            Number(
-              t.actual_amount || 0
-            ),
-          0
-        ),
-    [currentTx]
-  );
+  const actualExpenses =
+    useMemo(
+      () =>
+        currentTx
+          .filter(
+            (t) =>
+              t.kind ===
+                "expense" &&
+              t.completed ===
+                true &&
+              t.actual_amount !==
+                null
+          )
+          .reduce(
+            (sum, t) =>
+              sum +
+              Number(
+                t.actual_amount ||
+                  0
+              ),
+            0
+          ),
+      [currentTx]
+    );
 
   /*
    * =========================================================
    * FIXED EXPENSES
    *
-   * IMPORTANT:
-   *
-   * A fixed expense is now identified by its
-   * recurring_expense_id.
-   *
-   * This prevents old transactions that happen
-   * to have expense_type="fixed" from being
-   * incorrectly counted as fixed.
+   * Uses the SAME classification as the transaction list.
    * =========================================================
    */
 
@@ -461,16 +508,18 @@ export default function BudgetApp() {
         currentTx
           .filter(
             (t) =>
-              t.kind === "expense" &&
-              t.recurring_expense_id &&
-              t.completed === true &&
-              t.actual_amount !== null
+              isFixedExpense(t) &&
+              t.completed ===
+                true &&
+              t.actual_amount !==
+                null
           )
           .reduce(
             (sum, t) =>
               sum +
               Number(
-                t.actual_amount || 0
+                t.actual_amount ||
+                  0
               ),
             0
           ),
@@ -480,9 +529,6 @@ export default function BudgetApp() {
   /*
    * =========================================================
    * VARIABLE EXPENSES
-   *
-   * Everything that is an actual expense but is NOT
-   * linked to a recurring fixed expense.
    * =========================================================
    */
 
@@ -492,16 +538,20 @@ export default function BudgetApp() {
         currentTx
           .filter(
             (t) =>
-              t.kind === "expense" &&
-              !t.recurring_expense_id &&
-              t.completed === true &&
-              t.actual_amount !== null
+              isVariableExpense(
+                t
+              ) &&
+              t.completed ===
+                true &&
+              t.actual_amount !==
+                null
           )
           .reduce(
             (sum, t) =>
               sum +
               Number(
-                t.actual_amount || 0
+                t.actual_amount ||
+                  0
               ),
             0
           ),
@@ -510,7 +560,19 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * PENDING FIXED EXPENSES
+   * SAFETY CHECK
+   *
+   * Fixed + variable should always equal actual expenses.
+   * =========================================================
+   */
+
+  const classifiedExpenses =
+    fixedCharged +
+    variableExpenses;
+
+  /*
+   * =========================================================
+   * PENDING FIXED
    * =========================================================
    */
 
@@ -519,13 +581,15 @@ export default function BudgetApp() {
       () =>
         recurringForMonth
           .filter(
-            (r) => !r.charged
+            (r) =>
+              !r.charged
           )
           .reduce(
             (sum, r) =>
               sum +
               Number(
-                r.planned_amount || 0
+                r.planned_amount ||
+                  0
               ),
             0
           ),
@@ -538,7 +602,7 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * PENDING VARIABLE EXPENSES
+   * PENDING VARIABLE
    * =========================================================
    */
 
@@ -548,15 +612,18 @@ export default function BudgetApp() {
         currentTx
           .filter(
             (t) =>
-              t.kind === "expense" &&
-              !t.recurring_expense_id &&
-              t.completed !== true
+              isVariableExpense(
+                t
+              ) &&
+              t.completed !==
+                true
           )
           .reduce(
             (sum, t) =>
               sum +
               Number(
-                t.planned_amount || 0
+                t.planned_amount ||
+                  0
               ),
             0
           ),
@@ -564,7 +631,7 @@ export default function BudgetApp() {
     );
 
   const plannedExpenses =
-    expenses +
+    actualExpenses +
     pendingFixed +
     pendingVariable;
 
@@ -575,32 +642,27 @@ export default function BudgetApp() {
    */
 
   const balance =
-    income - expenses;
+    income -
+    actualExpenses;
 
   /*
    * =========================================================
-   * FIXED / VARIABLE PERCENTAGES
+   * FIXED / VARIABLE %
    * =========================================================
    */
 
   const fixedPercent =
-    expenses > 0
-      ? Math.min(
-          100,
-          (fixedCharged /
-            expenses) *
-            100
-        )
+    actualExpenses > 0
+      ? (fixedCharged /
+          actualExpenses) *
+        100
       : 0;
 
   const variablePercent =
-    expenses > 0
-      ? Math.min(
-          100,
-          (variableExpenses /
-            expenses) *
-            100
-        )
+    actualExpenses > 0
+      ? (variableExpenses /
+          actualExpenses) *
+        100
       : 0;
 
   /*
@@ -630,55 +692,62 @@ export default function BudgetApp() {
       return categories
         .filter(
           (c) =>
-            c.kind === "expense" ||
-            c.kind === "both"
+            c.kind ===
+              "expense" ||
+            c.kind ===
+              "both"
         )
-        .map((category) => {
-          const amount =
-            currentTx
-              .filter(
-                (t) =>
-                  t.kind ===
-                    "expense" &&
-                  t.completed ===
-                    true &&
-                  t.actual_amount !==
-                    null &&
-                  t.category_id ===
-                    category.id
-              )
-              .reduce(
-                (sum, t) =>
-                  sum +
-                  Number(
-                    t.actual_amount ||
-                      0
-                  ),
-                0
-              );
+        .map(
+          (category) => {
+            const amount =
+              currentTx
+                .filter(
+                  (t) =>
+                    t.kind ===
+                      "expense" &&
+                    t.completed ===
+                      true &&
+                    t.actual_amount !==
+                      null &&
+                    t.category_id ===
+                      category.id
+                )
+                .reduce(
+                  (sum, t) =>
+                    sum +
+                    Number(
+                      t.actual_amount ||
+                        0
+                    ),
+                  0
+                );
 
-          return {
-            ...category,
-            amount,
-            percent:
-              expenses > 0
-                ? (amount /
-                    expenses) *
-                  100
-                : 0,
-          };
-        })
+            return {
+              ...category,
+              amount,
+              percent:
+                actualExpenses >
+                0
+                  ? (amount /
+                      actualExpenses) *
+                    100
+                  : 0,
+            };
+          }
+        )
         .filter(
-          (c) => c.amount > 0
+          (c) =>
+            c.amount > 0
         )
         .sort(
           (a, b) =>
-            b.amount - a.amount
+            b.amount -
+            a.amount
         );
     }, [
       categories,
       currentTx,
-      expenses,
+      actualExpenses,
     ]);
 
   /*
@@ -700,15 +769,18 @@ export default function BudgetApp() {
         );
 
       values.completed =
-        fd.get("completed") ===
-        "on";
+        fd.get(
+          "completed"
+        ) === "on";
 
       localStorage.setItem(
         DRAFT_KEY,
-        JSON.stringify(values)
+        JSON.stringify(
+          values
+        )
       );
     } catch {
-      // Ignore local storage errors.
+      // Ignore.
     }
   }
 
@@ -727,13 +799,16 @@ export default function BudgetApp() {
   function openTransactionModal(
     tx = null
   ) {
-    setEditingTransaction(tx);
+    setEditingTransaction(
+      tx
+    );
 
     if (tx) {
       setDraft(null);
 
       setTransactionKind(
-        tx.kind || "expense"
+        tx.kind ||
+          "expense"
       );
     } else {
       try {
@@ -744,7 +819,9 @@ export default function BudgetApp() {
 
         setDraft(
           saved
-            ? JSON.parse(saved)
+            ? JSON.parse(
+                saved
+              )
             : null
         );
       } catch {
@@ -756,7 +833,9 @@ export default function BudgetApp() {
       );
     }
 
-    setModal("transaction");
+    setModal(
+      "transaction"
+    );
   }
 
   /*
@@ -779,16 +858,21 @@ export default function BudgetApp() {
       f.get("kind");
 
     const completed =
-      f.get("completed") ===
-      "on";
+      f.get(
+        "completed"
+      ) === "on";
 
     const actualRaw =
-      f.get("actual_amount");
+      f.get(
+        "actual_amount"
+      );
 
     const actualAmount =
       actualRaw !== null &&
       actualRaw !== ""
-        ? Number(actualRaw)
+        ? Number(
+            actualRaw
+          )
         : completed
         ? Number(
             f.get(
@@ -798,7 +882,13 @@ export default function BudgetApp() {
         : null;
 
     const expenseType =
-      f.get("expense_type");
+      kind === "expense"
+        ? f.get(
+            "expense_type"
+          )
+        : f.get(
+            "income_type"
+          );
 
     const row = {
       household_id:
@@ -807,11 +897,14 @@ export default function BudgetApp() {
       kind,
 
       description:
-        f.get("description"),
+        f.get(
+          "description"
+        ),
 
       category_id:
-        f.get("category_id") ||
-        null,
+        f.get(
+          "category_id"
+        ) || null,
 
       transaction_date:
         f.get(
@@ -833,7 +926,8 @@ export default function BudgetApp() {
           : null,
 
       expense_type:
-        expenseType || null,
+        expenseType ||
+        null,
 
       person_user_id:
         f.get(
@@ -841,7 +935,8 @@ export default function BudgetApp() {
         ) || null,
 
       note:
-        f.get("note") || null,
+        f.get("note") ||
+        null,
 
       payment_method:
         f.get(
@@ -849,13 +944,15 @@ export default function BudgetApp() {
         ) || null,
 
       merchant:
-        f.get("merchant") ||
-        null,
+        f.get(
+          "merchant"
+        ) || null,
 
       credit_card_last4:
         f.get(
           "payment_method"
-        ) === "credit_card"
+        ) ===
+        "credit_card"
           ? f.get(
               "credit_card_last4"
             ) || null
@@ -871,10 +968,14 @@ export default function BudgetApp() {
 
     let result;
 
-    if (editingTransaction) {
+    if (
+      editingTransaction
+    ) {
       result =
         await supabase
-          .from("transactions")
+          .from(
+            "transactions"
+          )
           .update(row)
           .eq(
             "id",
@@ -883,7 +984,9 @@ export default function BudgetApp() {
     } else {
       result =
         await supabase
-          .from("transactions")
+          .from(
+            "transactions"
+          )
           .insert(row);
     }
 
@@ -925,9 +1028,14 @@ export default function BudgetApp() {
 
     const { error } =
       await supabase
-        .from("transactions")
+        .from(
+          "transactions"
+        )
         .delete()
-        .eq("id", tx.id);
+        .eq(
+          "id",
+          tx.id
+        );
 
     if (error) {
       alert(
@@ -943,7 +1051,7 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * RECURRING EXPENSE
+   * RECURRING
    * =========================================================
    */
 
@@ -954,7 +1062,9 @@ export default function BudgetApp() {
       recurringExpense
     );
 
-    setModal("recurring");
+    setModal(
+      "recurring"
+    );
   }
 
   async function saveRecurring(
@@ -975,8 +1085,9 @@ export default function BudgetApp() {
         f.get("name"),
 
       category_id:
-        f.get("category_id") ||
-        null,
+        f.get(
+          "category_id"
+        ) || null,
 
       planned_amount:
         Number(
@@ -1009,13 +1120,16 @@ export default function BudgetApp() {
         ) || null,
 
       merchant:
-        f.get("merchant") ||
-        null,
+        f.get(
+          "merchant"
+        ) || null,
     };
 
     let result;
 
-    if (editingRecurring) {
+    if (
+      editingRecurring
+    ) {
       result =
         await supabase
           .from(
@@ -1075,7 +1189,8 @@ export default function BudgetApp() {
           "recurring_expenses"
         )
         .update({
-          is_active: false,
+          is_active:
+            false,
         })
         .eq(
           "id",
@@ -1115,7 +1230,9 @@ export default function BudgetApp() {
   ) {
     e.preventDefault();
 
-    if (!chargingRecurring)
+    if (
+      !chargingRecurring
+    )
       return;
 
     const f =
@@ -1200,7 +1317,8 @@ export default function BudgetApp() {
       credit_card_last4:
         f.get(
           "payment_method"
-        ) === "credit_card"
+        ) ===
+        "credit_card"
           ? f.get(
               "credit_card_last4"
             ) || null
@@ -1221,7 +1339,9 @@ export default function BudgetApp() {
 
     const { error } =
       await supabase
-        .from("transactions")
+        .from(
+          "transactions"
+        )
         .insert(row);
 
     if (error) {
@@ -1271,7 +1391,8 @@ export default function BudgetApp() {
           kind:
             f.get("kind"),
 
-          is_active: true,
+          is_active:
+            true,
         });
 
     if (error) {
@@ -1373,7 +1494,7 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * APP
+   * MAIN APP
    * =========================================================
    */
 
@@ -1407,7 +1528,10 @@ export default function BudgetApp() {
 
       <nav className="tabs">
         {[
-          ["dashboard", "סקירה"],
+          [
+            "dashboard",
+            "סקירה",
+          ],
           [
             "transactions",
             "תנועות",
@@ -1445,7 +1569,8 @@ export default function BudgetApp() {
             DASHBOARD
            ===================================================== */}
 
-        {tab === "dashboard" && (
+        {tab ===
+          "dashboard" && (
           <>
             <div className="monthBar">
               <button
@@ -1507,7 +1632,7 @@ export default function BudgetApp() {
             </div>
 
             {/* =================================================
-                1. BUDGET BALANCE
+                1. BALANCE
                ================================================= */}
 
             <div
@@ -1579,7 +1704,7 @@ export default function BudgetApp() {
                     }}
                   >
                     {money(
-                      expenses
+                      actualExpenses
                     )}
                   </strong>
                 </div>
@@ -1880,18 +2005,25 @@ export default function BudgetApp() {
                 </div>
               </div>
 
-              {expenses === 0 && (
-                <p
-                  className="muted"
-                  style={{
-                    marginTop:
-                      14,
-                  }}
-                >
-                  אין עדיין הוצאות
-                  שחויבו בחודש הזה.
-                </p>
-              )}
+              {actualExpenses >
+                0 &&
+                classifiedExpenses !==
+                  actualExpenses && (
+                  <div
+                    style={{
+                      marginTop:
+                        12,
+                      fontSize:
+                        12,
+                      color:
+                        "#b45309",
+                    }}
+                  >
+                    יש פער בסיווג
+                    ההוצאות. נבדוק
+                    אותו לפני שנמשיך.
+                  </div>
+                )}
             </div>
 
             {/* =================================================
@@ -2077,9 +2209,9 @@ export default function BudgetApp() {
                           t.person_user_id
                       );
 
-                    const isFixed =
-                      Boolean(
-                        t.recurring_expense_id
+                    const fixed =
+                      isFixedExpense(
+                        t
                       );
 
                     return (
@@ -2125,7 +2257,7 @@ export default function BudgetApp() {
                             {t.kind ===
                             "income"
                               ? "הכנסה"
-                              : isFixed
+                              : fixed
                               ? "הוצאה קבועה"
                               : "הוצאה משתנה"}
 
@@ -2238,7 +2370,7 @@ export default function BudgetApp() {
         )}
 
         {/* =====================================================
-            FIXED
+            FIXED EXPENSES
            ===================================================== */}
 
         {tab === "fixed" && (
@@ -2670,7 +2802,12 @@ export default function BudgetApp() {
               סוג
 
               <select
-                name="expense_type"
+                name={
+                  transactionKind ===
+                  "income"
+                    ? "income_type"
+                    : "expense_type"
+                }
                 defaultValue={
                   editingTransaction?.expense_type ??
                   draft?.expense_type ??
@@ -3046,7 +3183,8 @@ export default function BudgetApp() {
           CHARGE RECURRING MODAL
          ======================================================= */}
 
-      {modal === "charge" &&
+      {modal ===
+        "charge" &&
         chargingRecurring && (
           <Modal
             title={`חיוב: ${chargingRecurring.name}`}
@@ -3225,7 +3363,8 @@ export default function BudgetApp() {
           CATEGORY MODAL
          ======================================================= */}
 
-      {modal === "category" && (
+      {modal ===
+        "category" && (
         <Modal
           title="קטגוריה חדשה"
           onClose={() =>
