@@ -55,12 +55,38 @@ const isVariableExpense = (transaction) =>
   transaction?.kind === "expense" &&
   !isFixedExpense(transaction);
 
-const isActualExpense = (transaction) =>
-  transaction?.kind === "expense" &&
-  transaction?.completed === true &&
+const hasActualAmount = (transaction) =>
   transaction?.actual_amount !== null &&
   transaction?.actual_amount !== undefined &&
   transaction?.actual_amount !== "";
+
+const isActualExpense = (transaction) =>
+  transaction?.kind === "expense" &&
+  transaction?.completed === true &&
+  hasActualAmount(transaction);
+
+const emptyTransactionForm = () => ({
+  kind: "expense",
+
+  description: "",
+  category_id: "",
+  transaction_date: todayKey(),
+
+  expense_type: "variable",
+  income_type: "variable",
+
+  planned_amount: "",
+  actual_amount: "",
+
+  payment_method: "",
+  merchant: "",
+  credit_card_last4: "",
+
+  person_user_id: "",
+  completed: true,
+
+  note: "",
+});
 
 function Modal({
   title,
@@ -96,27 +122,6 @@ function Modal({
   );
 }
 
-const emptyTransactionForm = () => ({
-  kind: "expense",
-  description: "",
-  category_id: "",
-  transaction_date: todayKey(),
-
-  expense_type: "variable",
-  income_type: "variable",
-
-  planned_amount: "",
-  actual_amount: "",
-
-  payment_method: "",
-  merchant: "",
-  credit_card_last4: "",
-
-  person_user_id: "",
-  completed: true,
-  note: "",
-});
-
 export default function BudgetApp() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -150,15 +155,12 @@ export default function BudgetApp() {
   const [transactionForm, setTransactionForm] =
     useState(emptyTransactionForm());
 
-  const [transactionSaveError, setTransactionSaveError] =
-    useState("");
-
-  const [savingTransaction, setSavingTransaction] =
-    useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   /*
    * =========================================================
-   * AUTH + INITIAL LOAD
+   * AUTH + LOAD
    * =========================================================
    */
 
@@ -181,9 +183,7 @@ export default function BudgetApp() {
       setSession(data.session);
 
       if (data.session?.user) {
-        await loadData(
-          data.session.user.id
-        );
+        await loadData(data.session.user.id);
       } else {
         setLoading(false);
       }
@@ -193,28 +193,25 @@ export default function BudgetApp() {
 
     const {
       data: authListener,
-    } =
-      supabase.auth.onAuthStateChange(
-        async (_event, newSession) => {
-          if (!mounted) return;
+    } = supabase.auth.onAuthStateChange(
+      async (_event, newSession) => {
+        if (!mounted) return;
 
-          setSession(newSession);
+        setSession(newSession);
 
-          if (newSession?.user) {
-            await loadData(
-              newSession.user.id
-            );
-          } else {
-            setProfile(null);
-            setHousehold(null);
-            setCategories([]);
-            setTransactions([]);
-            setRecurring([]);
-            setMembers([]);
-            setLoading(false);
-          }
+        if (newSession?.user) {
+          await loadData(newSession.user.id);
+        } else {
+          setProfile(null);
+          setHousehold(null);
+          setCategories([]);
+          setTransactions([]);
+          setRecurring([]);
+          setMembers([]);
+          setLoading(false);
         }
-      );
+      }
+    );
 
     return () => {
       mounted = false;
@@ -234,16 +231,12 @@ export default function BudgetApp() {
       .eq("user_id", userId)
       .maybeSingle();
 
-    if (
-      membershipError ||
-      !membership
-    ) {
+    if (membershipError || !membership) {
       setLoading(false);
       return;
     }
 
-    const householdId =
-      membership.household_id;
+    const householdId = membership.household_id;
 
     const [
       householdResult,
@@ -322,9 +315,7 @@ export default function BudgetApp() {
   async function refresh() {
     if (!session?.user?.id) return;
 
-    await loadData(
-      session.user.id
-    );
+    await loadData(session.user.id);
   }
 
   /*
@@ -358,62 +349,67 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * CURRENT MONTH
+   * MONTH
    * =========================================================
    */
 
-  const currentTransactions =
-    useMemo(
-      () =>
-        transactions.filter(
-          (transaction) =>
-            String(
-              transaction.transaction_date || ""
-            ).startsWith(month)
-        ),
-      [transactions, month]
-    );
+  const currentTransactions = useMemo(
+    () =>
+      transactions.filter(
+        (transaction) =>
+          String(
+            transaction.transaction_date || ""
+          ).startsWith(month)
+      ),
+    [transactions, month]
+  );
 
   /*
    * =========================================================
-   * RECURRING FOR MONTH
+   * RECURRING FOR CURRENT MONTH
    * =========================================================
    */
 
-  const recurringForMonth =
-    useMemo(
-      () =>
-        recurring.map(
-          (recurringExpense) => {
-            const chargedTransaction =
-              transactions.find(
-                (transaction) =>
-                  transaction.recurring_expense_id ===
-                    recurringExpense.id &&
-                  transaction.recurring_month ===
-                    month &&
-                  transaction.kind ===
-                    "expense" &&
-                  transaction.completed ===
-                    true &&
-                  transaction.actual_amount !==
-                    null
-              );
+  const recurringForMonth = useMemo(
+    () =>
+      recurring.map(
+        (recurringExpense) => {
+          const chargedTransaction =
+            transactions.find(
+              (transaction) =>
+                transaction.recurring_expense_id ===
+                  recurringExpense.id &&
+                transaction.recurring_month ===
+                  month &&
+                transaction.kind ===
+                  "expense" &&
+                transaction.completed ===
+                  true &&
+                hasActualAmount(
+                  transaction
+                )
+            );
 
-            return {
-              ...recurringExpense,
-              chargedTransaction:
-                chargedTransaction ||
-                null,
-              charged:
-                Boolean(
-                  chargedTransaction
-                ),
-            };
-          }
-        ),
-      [recurring, transactions, month]
-    );
+          return {
+            ...recurringExpense,
+
+            chargedTransaction:
+              chargedTransaction ||
+              null,
+
+            charged:
+              Boolean(
+                chargedTransaction
+              ),
+          };
+        }
+      ),
+    [
+      recurring,
+      transactions,
+      month,
+    ]
+  );
 
   /*
    * =========================================================
@@ -426,15 +422,20 @@ export default function BudgetApp() {
       currentTransactions
         .filter(
           (transaction) =>
-            transaction.kind === "income" &&
-            transaction.completed === true &&
-            transaction.actual_amount !== null
+            transaction.kind ===
+              "income" &&
+            transaction.completed ===
+              true &&
+            hasActualAmount(
+              transaction
+            )
         )
         .reduce(
           (sum, transaction) =>
             sum +
             Number(
-              transaction.actual_amount || 0
+              transaction.actual_amount ||
+                0
             ),
           0
         ),
@@ -447,21 +448,23 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  const actualExpenses =
-    useMemo(
-      () =>
-        currentTransactions
-          .filter(isActualExpense)
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.actual_amount || 0
-              ),
-            0
-          ),
-      [currentTransactions]
-    );
+  const actualExpenses = useMemo(
+    () =>
+      currentTransactions
+        .filter(
+          isActualExpense
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum +
+            Number(
+              transaction.actual_amount ||
+                0
+            ),
+          0
+        ),
+    [currentTransactions]
+  );
 
   /*
    * =========================================================
@@ -469,26 +472,31 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  const fixedCharged =
-    useMemo(
-      () =>
-        currentTransactions
-          .filter(
-            (transaction) =>
-              isFixedExpense(transaction) &&
-              transaction.completed === true &&
-              transaction.actual_amount !== null
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.actual_amount || 0
-              ),
-            0
-          ),
-      [currentTransactions]
-    );
+  const fixedCharged = useMemo(
+    () =>
+      currentTransactions
+        .filter(
+          (transaction) =>
+            isFixedExpense(
+              transaction
+            ) &&
+            transaction.completed ===
+              true &&
+            hasActualAmount(
+              transaction
+            )
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum +
+            Number(
+              transaction.actual_amount ||
+                0
+            ),
+          0
+        ),
+    [currentTransactions]
+  );
 
   /*
    * =========================================================
@@ -496,26 +504,31 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  const variableExpenses =
-    useMemo(
-      () =>
-        currentTransactions
-          .filter(
-            (transaction) =>
-              isVariableExpense(transaction) &&
-              transaction.completed === true &&
-              transaction.actual_amount !== null
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.actual_amount || 0
-              ),
-            0
-          ),
-      [currentTransactions]
-    );
+  const variableExpenses = useMemo(
+    () =>
+      currentTransactions
+        .filter(
+          (transaction) =>
+            isVariableExpense(
+              transaction
+            ) &&
+            transaction.completed ===
+              true &&
+            hasActualAmount(
+              transaction
+            )
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum +
+            Number(
+              transaction.actual_amount ||
+                0
+            ),
+          0
+        ),
+    [currentTransactions]
+  );
 
   /*
    * =========================================================
@@ -523,26 +536,29 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  const manualFixedPending =
-    useMemo(
-      () =>
-        currentTransactions
-          .filter(
-            (transaction) =>
-              isFixedExpense(transaction) &&
-              !transaction.recurring_expense_id &&
-              transaction.completed !== true
-          )
-          .reduce(
-            (sum, transaction) =>
-              sum +
-              Number(
-                transaction.planned_amount || 0
-              ),
-            0
-          ),
-      [currentTransactions]
-    );
+  const manualFixedPending = useMemo(
+    () =>
+      currentTransactions
+        .filter(
+          (transaction) =>
+            isFixedExpense(
+              transaction
+            ) &&
+            !transaction.recurring_expense_id &&
+            transaction.completed !==
+              true
+        )
+        .reduce(
+          (sum, transaction) =>
+            sum +
+            Number(
+              transaction.planned_amount ||
+                0
+            ),
+          0
+        ),
+    [currentTransactions]
+  );
 
   /*
    * =========================================================
@@ -550,33 +566,38 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  const recurringPending =
-    useMemo(
-      () =>
-        recurringForMonth
-          .filter(
-            (item) => !item.charged
-          )
-          .reduce(
-            (sum, item) =>
-              sum +
-              Number(
-                item.planned_amount || 0
-              ),
-            0
-          ),
-      [recurringForMonth]
-    );
+  const recurringPending = useMemo(
+    () =>
+      recurringForMonth
+        .filter(
+          (item) =>
+            !item.charged
+        )
+        .reduce(
+          (sum, item) =>
+            sum +
+            Number(
+              item.planned_amount ||
+                0
+            ),
+          0
+        ),
+    [recurringForMonth]
+  );
 
   const pendingFixed =
     recurringPending +
     manualFixedPending;
 
+  /*
+   * VARIABLE HAS NO PLANNED TOTAL
+   */
+
   const pendingVariable = 0;
 
   /*
    * =========================================================
-   * FIXED PLANNED
+   * PLANNED FIXED
    * =========================================================
    */
 
@@ -586,7 +607,7 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * TOTAL PLANNED
+   * TOTAL EXPENSE OBLIGATION
    * =========================================================
    */
 
@@ -652,8 +673,10 @@ export default function BudgetApp() {
         categories
           .filter(
             (category) =>
-              category.kind === "expense" ||
-              category.kind === "both"
+              category.kind ===
+                "expense" ||
+              category.kind ===
+                "both"
           )
           .map((category) => {
             const amount =
@@ -667,10 +690,14 @@ export default function BudgetApp() {
                       category.id
                 )
                 .reduce(
-                  (sum, transaction) =>
+                  (
+                    sum,
+                    transaction
+                  ) =>
                     sum +
                     Number(
-                      transaction.actual_amount || 0
+                      transaction.actual_amount ||
+                        0
                     ),
                   0
                 );
@@ -678,6 +705,7 @@ export default function BudgetApp() {
             return {
               ...category,
               amount,
+
               percent:
                 actualExpenses > 0
                   ? (amount /
@@ -711,7 +739,7 @@ export default function BudgetApp() {
   function openTransactionModal(
     transaction = null
   ) {
-    setTransactionSaveError("");
+    setSaveError("");
 
     if (transaction) {
       setEditingTransaction(
@@ -736,12 +764,16 @@ export default function BudgetApp() {
           todayKey(),
 
         expense_type:
-          transaction.expense_type ||
-          "variable",
+          transaction.expense_type ===
+          "fixed"
+            ? "fixed"
+            : "variable",
 
         income_type:
-          transaction.expense_type ||
-          "variable",
+          transaction.expense_type ===
+          "fixed"
+            ? "fixed"
+            : "variable",
 
         planned_amount:
           transaction.planned_amount ??
@@ -768,14 +800,17 @@ export default function BudgetApp() {
           "",
 
         completed:
-          transaction.completed === true,
+          transaction.completed ===
+          true,
 
         note:
           transaction.note ||
           "",
       });
     } else {
-      setEditingTransaction(null);
+      setEditingTransaction(
+        null
+      );
 
       setTransactionForm(
         emptyTransactionForm()
@@ -786,11 +821,11 @@ export default function BudgetApp() {
   }
 
   function closeTransactionModal() {
-    if (savingTransaction) return;
+    if (saving) return;
 
     setEditingTransaction(null);
     setModal(null);
-    setTransactionSaveError("");
+    setSaveError("");
 
     setTransactionForm(
       emptyTransactionForm()
@@ -807,36 +842,36 @@ export default function BudgetApp() {
         [field]: value,
       })
     );
-
-    if (transactionSaveError) {
-      setTransactionSaveError("");
-    }
   }
 
   /*
    * =========================================================
-   * CHANGE EXPENSE TYPE
+   * EXPENSE TYPE
    *
    * IMPORTANT:
-   * We deliberately preserve all entered fields.
+   * We deliberately preserve BOTH amounts.
    *
-   * Variable:
-   *   actual_amount is relevant.
-   *
-   * Fixed:
-   *   planned_amount + actual_amount are relevant.
+   * Switching type only changes which fields are shown.
+   * Nothing already entered gets erased.
    * =========================================================
    */
 
-  function changeExpenseType(value) {
+  function changeExpenseType(
+    value
+  ) {
+    setSaveError("");
+
     setTransactionForm(
       (current) => ({
         ...current,
-        expense_type: value,
+
+        expense_type:
+          value,
 
         /*
-         * A variable expense is always an actual expense.
-         * For fixed expenses we preserve the current checkbox.
+         * Variable expenses are always actual.
+         * Fixed expenses preserve the user's
+         * current charged/not charged state.
          */
         completed:
           value === "variable"
@@ -844,8 +879,6 @@ export default function BudgetApp() {
             : current.completed,
       })
     );
-
-    setTransactionSaveError("");
   }
 
   /*
@@ -854,46 +887,43 @@ export default function BudgetApp() {
    * =========================================================
    */
 
-  async function saveTransaction(event) {
+  async function saveTransaction(
+    event
+  ) {
     event.preventDefault();
 
-    if (savingTransaction) return;
+    if (saving) return;
 
-    setTransactionSaveError("");
+    setSaveError("");
 
     const form =
       transactionForm;
 
     if (!household?.id) {
-      setTransactionSaveError(
-        "לא נמצא חשבון משפחתי. נסי לרענן את הדף."
+      setSaveError(
+        "לא נמצא התקציב המשפחתי."
       );
       return;
     }
 
-    if (!session?.user?.id) {
-      setTransactionSaveError(
-        "המשתמש לא מחובר. נסי להתחבר מחדש."
-      );
-      return;
-    }
-
-    if (!form.description.trim()) {
-      setTransactionSaveError(
+    if (
+      !form.description.trim()
+    ) {
+      setSaveError(
         "יש להזין תיאור."
       );
       return;
     }
 
     if (!form.category_id) {
-      setTransactionSaveError(
+      setSaveError(
         "יש לבחור קטגוריה."
       );
       return;
     }
 
     if (!form.transaction_date) {
-      setTransactionSaveError(
+      setSaveError(
         "יש לבחור תאריך."
       );
       return;
@@ -907,7 +937,8 @@ export default function BudgetApp() {
 
     if (
       form.kind === "expense" &&
-      form.expense_type === "variable"
+      form.expense_type ===
+        "variable"
     ) {
       const actual =
         Number(
@@ -915,17 +946,18 @@ export default function BudgetApp() {
         );
 
       if (
-        form.actual_amount === "" ||
+        form.actual_amount ===
+          "" ||
         Number.isNaN(actual)
       ) {
-        setTransactionSaveError(
+        setSaveError(
           "יש להזין סכום בפועל."
         );
         return;
       }
 
       if (actual < 0) {
-        setTransactionSaveError(
+        setSaveError(
           "הסכום לא יכול להיות שלילי."
         );
         return;
@@ -947,10 +979,11 @@ export default function BudgetApp() {
           form.transaction_date,
 
         /*
-         * DB compatibility:
-         * planned_amount is populated with actual,
-         * but the application treats variable expenses
-         * as having NO planned amount.
+         * The DB currently requires planned_amount.
+         * For variable expenses we store the actual
+         * amount there only for DB compatibility.
+         *
+         * The application never treats this as planned.
          */
         planned_amount:
           actual,
@@ -985,6 +1018,9 @@ export default function BudgetApp() {
             ? form.credit_card_last4 ||
               null
             : null,
+
+        updated_at:
+          new Date().toISOString(),
       };
 
       await persistTransaction(
@@ -1002,7 +1038,8 @@ export default function BudgetApp() {
 
     if (
       form.kind === "expense" &&
-      form.expense_type === "fixed"
+      form.expense_type ===
+        "fixed"
     ) {
       const planned =
         Number(
@@ -1010,18 +1047,19 @@ export default function BudgetApp() {
         );
 
       if (
-        form.planned_amount === "" ||
+        form.planned_amount ===
+          "" ||
         Number.isNaN(planned)
       ) {
-        setTransactionSaveError(
+        setSaveError(
           "יש להזין סכום מתוכנן."
         );
         return;
       }
 
       if (planned < 0) {
-        setTransactionSaveError(
-          "הסכום המתוכנן לא יכול להיות שלילי."
+        setSaveError(
+          "הסכום לא יכול להיות שלילי."
         );
         return;
       }
@@ -1029,9 +1067,12 @@ export default function BudgetApp() {
       let actual = null;
 
       if (
-        form.actual_amount !== "" &&
-        form.actual_amount !== null &&
-        form.actual_amount !== undefined
+        form.actual_amount !==
+          "" &&
+        form.actual_amount !==
+          null &&
+        form.actual_amount !==
+          undefined
       ) {
         actual =
           Number(
@@ -1042,7 +1083,7 @@ export default function BudgetApp() {
           Number.isNaN(actual) ||
           actual < 0
         ) {
-          setTransactionSaveError(
+          setSaveError(
             "הסכום בפועל אינו תקין."
           );
           return;
@@ -1050,10 +1091,11 @@ export default function BudgetApp() {
       }
 
       /*
-       * If user marks the expense as charged
-       * without entering actual amount,
+       * If the user marked it as charged
+       * but did not enter an actual amount,
        * planned becomes actual.
        */
+
       if (
         form.completed === true &&
         actual === null
@@ -1062,9 +1104,10 @@ export default function BudgetApp() {
       }
 
       /*
-       * Any actual amount means the expense
+       * An actual amount means the expense
        * is charged.
        */
+
       const completed =
         actual !== null;
 
@@ -1116,6 +1159,9 @@ export default function BudgetApp() {
             ? form.credit_card_last4 ||
               null
             : null,
+
+        updated_at:
+          new Date().toISOString(),
       };
 
       await persistTransaction(
@@ -1131,51 +1177,57 @@ export default function BudgetApp() {
      * =======================================================
      */
 
-    if (form.kind === "income") {
-      let actual = null;
+    if (
+      form.kind === "income"
+    ) {
+      const actual =
+        Number(
+          form.actual_amount
+        );
 
       if (
-        form.actual_amount !== "" &&
-        form.actual_amount !== null
-      ) {
-        actual =
-          Number(
-            form.actual_amount
-          );
-      } else if (
-        form.planned_amount !== "" &&
-        form.planned_amount !== null
-      ) {
-        actual =
-          Number(
-            form.planned_amount
-          );
-      }
-
-      if (
-        actual === null ||
+        form.actual_amount ===
+          "" ||
         Number.isNaN(actual)
       ) {
-        setTransactionSaveError(
+        setSaveError(
           "יש להזין סכום הכנסה."
         );
         return;
       }
 
       if (actual < 0) {
-        setTransactionSaveError(
+        setSaveError(
           "הסכום לא יכול להיות שלילי."
         );
         return;
       }
 
-      const planned =
-        form.planned_amount !== "" &&
-        form.planned_amount !== null
-          ? Number(
-              form.planned_amount
-            )
-          : actual;
+      let planned = actual;
+
+      if (
+        form.planned_amount !==
+          "" &&
+        form.planned_amount !==
+          null &&
+        form.planned_amount !==
+          undefined
+      ) {
+        planned =
+          Number(
+            form.planned_amount
+          );
+
+        if (
+          Number.isNaN(planned) ||
+          planned < 0
+        ) {
+          setSaveError(
+            "הסכום המתוכנן אינו תקין."
+          );
+          return;
+        }
+      }
 
       const row = {
         household_id:
@@ -1222,6 +1274,9 @@ export default function BudgetApp() {
 
         credit_card_last4:
           null,
+
+        updated_at:
+          new Date().toISOString(),
       };
 
       await persistTransaction(
@@ -1233,29 +1288,29 @@ export default function BudgetApp() {
   /*
    * =========================================================
    * PERSIST TRANSACTION
-   *
-   * IMPORTANT:
-   * created_by is only sent on INSERT.
-   *
-   * This avoids unnecessary update failures.
    * =========================================================
    */
 
-  async function persistTransaction(row) {
-    setSavingTransaction(true);
-    setTransactionSaveError("");
+  async function persistTransaction(
+    row
+  ) {
+    setSaving(true);
+    setSaveError("");
 
     let result;
 
-    if (editingTransaction) {
+    if (
+      editingTransaction
+    ) {
+      /*
+       * IMPORTANT:
+       * Do NOT send created_by during update.
+       */
+
       result =
         await supabase
           .from("transactions")
-          .update({
-            ...row,
-            updated_at:
-              new Date().toISOString(),
-          })
+          .update(row)
           .eq(
             "id",
             editingTransaction.id
@@ -1263,10 +1318,13 @@ export default function BudgetApp() {
           .eq(
             "household_id",
             household.id
-          )
-          .select()
-          .single();
+          );
     } else {
+      /*
+       * created_by is only assigned
+       * when creating a new transaction.
+       */
+
       result =
         await supabase
           .from("transactions")
@@ -1274,11 +1332,7 @@ export default function BudgetApp() {
             ...row,
             created_by:
               session.user.id,
-            updated_at:
-              new Date().toISOString(),
-          })
-          .select()
-          .single();
+          });
     }
 
     if (result.error) {
@@ -1287,28 +1341,28 @@ export default function BudgetApp() {
         result.error
       );
 
-      setTransactionSaveError(
-        "לא הצלחתי לשמור את התנועה.\n" +
+      setSaveError(
+        "לא הצלחתי לשמור את התנועה.\n\n" +
           result.error.message
       );
 
-      setSavingTransaction(false);
+      setSaving(false);
 
-      /*
-       * IMPORTANT:
-       * Do NOT close the modal.
-       * Do NOT reset the form.
-       */
       return;
     }
 
-    setSavingTransaction(false);
+    setSaving(false);
 
     /*
-     * Only after successful save:
-     * close + refresh.
+     * Only AFTER successful save
+     * do we close/reset the form.
      */
-    closeTransactionModal();
+
+    setEditingTransaction(null);
+    setModal(null);
+    setTransactionForm(
+      emptyTransactionForm()
+    );
 
     await refresh();
   }
@@ -1337,6 +1391,10 @@ export default function BudgetApp() {
       .eq(
         "id",
         transaction.id
+      )
+      .eq(
+        "household_id",
+        household.id
       );
 
     if (error) {
@@ -1364,12 +1422,16 @@ export default function BudgetApp() {
       recurringExpense
     );
 
+    setSaveError("");
     setModal("recurring");
   }
 
   function closeRecurringModal() {
+    if (saving) return;
+
     setEditingRecurring(null);
     setModal(null);
+    setSaveError("");
   }
 
   /*
@@ -1383,10 +1445,21 @@ export default function BudgetApp() {
   ) {
     event.preventDefault();
 
+    if (saving) return;
+
+    setSaveError("");
+    setSaving(true);
+
     const form =
       new FormData(
         event.currentTarget
       );
+
+    const name =
+      String(
+        form.get("name") ||
+          ""
+      ).trim();
 
     const planned =
       Number(
@@ -1402,13 +1475,22 @@ export default function BudgetApp() {
         ) || 1
       );
 
+    if (!name) {
+      setSaveError(
+        "יש להזין שם הוצאה."
+      );
+      setSaving(false);
+      return;
+    }
+
     if (
       Number.isNaN(planned) ||
       planned < 0
     ) {
-      alert(
+      setSaveError(
         "יש להזין סכום מתוכנן תקין."
       );
+      setSaving(false);
       return;
     }
 
@@ -1416,9 +1498,10 @@ export default function BudgetApp() {
       day < 1 ||
       day > 31
     ) {
-      alert(
+      setSaveError(
         "יום בחודש חייב להיות בין 1 ל־31."
       );
+      setSaving(false);
       return;
     }
 
@@ -1426,12 +1509,12 @@ export default function BudgetApp() {
       household_id:
         household.id,
 
-      name:
-        form.get("name"),
+      name,
 
       category_id:
-        form.get("category_id") ||
-        null,
+        form.get(
+          "category_id"
+        ) || null,
 
       planned_amount:
         planned,
@@ -1440,8 +1523,9 @@ export default function BudgetApp() {
         day,
 
       person_user_id:
-        form.get("person_user_id") ||
-        null,
+        form.get(
+          "person_user_id"
+        ) || null,
 
       is_active: true,
 
@@ -1450,8 +1534,9 @@ export default function BudgetApp() {
         null,
 
       payment_method:
-        form.get("payment_method") ||
-        null,
+        form.get(
+          "payment_method"
+        ) || null,
 
       merchant:
         form.get("merchant") ||
@@ -1460,7 +1545,9 @@ export default function BudgetApp() {
 
     let result;
 
-    if (editingRecurring) {
+    if (
+      editingRecurring
+    ) {
       result =
         await supabase
           .from(
@@ -1470,6 +1557,10 @@ export default function BudgetApp() {
           .eq(
             "id",
             editingRecurring.id
+          )
+          .eq(
+            "household_id",
+            household.id
           );
     } else {
       result =
@@ -1481,15 +1572,18 @@ export default function BudgetApp() {
     }
 
     if (result.error) {
-      alert(
+      setSaveError(
         "לא הצלחתי לשמור את ההוצאה הקבועה.\n\n" +
           result.error.message
       );
 
+      setSaving(false);
       return;
     }
 
-    closeRecurringModal();
+    setSaving(false);
+    setEditingRecurring(null);
+    setModal(null);
 
     await refresh();
   }
@@ -1522,6 +1616,10 @@ export default function BudgetApp() {
       .eq(
         "id",
         recurringExpense.id
+      )
+      .eq(
+        "household_id",
+        household.id
       );
 
     if (error) {
@@ -1549,12 +1647,16 @@ export default function BudgetApp() {
       recurringExpense
     );
 
+    setSaveError("");
     setModal("charge");
   }
 
   function closeChargeModal() {
+    if (saving) return;
+
     setChargingRecurring(null);
     setModal(null);
+    setSaveError("");
   }
 
   async function saveRecurringCharge(
@@ -1562,9 +1664,14 @@ export default function BudgetApp() {
   ) {
     event.preventDefault();
 
-    if (!chargingRecurring) {
+    if (
+      saving ||
+      !chargingRecurring
+    )
       return;
-    }
+
+    setSaveError("");
+    setSaving(true);
 
     const form =
       new FormData(
@@ -1582,11 +1689,16 @@ export default function BudgetApp() {
       Number.isNaN(actual) ||
       actual < 0
     ) {
-      alert(
+      setSaveError(
         "יש להזין סכום בפועל."
       );
+      setSaving(false);
       return;
     }
+
+    /*
+     * Check client data first.
+     */
 
     const alreadyCharged =
       transactions.some(
@@ -1597,22 +1709,25 @@ export default function BudgetApp() {
             month &&
           transaction.completed ===
             true &&
-          transaction.actual_amount !==
-            null
+          hasActualAmount(
+            transaction
+          )
       );
 
     if (alreadyCharged) {
-      alert(
+      setSaveError(
         "הוצאה זו כבר סומנה כחויבה בחודש הזה."
       );
-
+      setSaving(false);
       return;
     }
 
     const paymentMethod =
       form.get(
         "payment_method"
-      ) || null;
+      ) ||
+      chargingRecurring.payment_method ||
+      null;
 
     const row = {
       household_id:
@@ -1659,9 +1774,7 @@ export default function BudgetApp() {
         null,
 
       payment_method:
-        paymentMethod ||
-        chargingRecurring.payment_method ||
-        null,
+        paymentMethod,
 
       merchant:
         form.get("merchant") ||
@@ -1669,15 +1782,11 @@ export default function BudgetApp() {
         null,
 
       credit_card_last4:
-        paymentMethod === "credit_card"
-          ? String(
-              form.get(
-                "credit_card_last4"
-              ) || ""
-            )
-              .replace(/\D/g, "")
-              .slice(0, 4) ||
-            null
+        paymentMethod ===
+        "credit_card"
+          ? form.get(
+              "credit_card_last4"
+            ) || null
           : null,
 
       recurring_expense_id:
@@ -1700,15 +1809,18 @@ export default function BudgetApp() {
       .insert(row);
 
     if (error) {
-      alert(
+      setSaveError(
         "לא הצלחתי לרשום את החיוב.\n\n" +
           error.message
       );
 
+      setSaving(false);
       return;
     }
 
-    closeChargeModal();
+    setSaving(false);
+    setChargingRecurring(null);
+    setModal(null);
 
     await refresh();
   }
@@ -1731,7 +1843,8 @@ export default function BudgetApp() {
 
     const name =
       String(
-        form.get("name") || ""
+        form.get("name") ||
+          ""
       ).trim();
 
     if (!name) {
@@ -1773,7 +1886,7 @@ export default function BudgetApp() {
 
   /*
    * =========================================================
-   * LOGIN VIEW
+   * LOGIN
    * =========================================================
    */
 
@@ -1790,7 +1903,8 @@ export default function BudgetApp() {
           </h1>
 
           <p>
-            התקציב המשפחתי המשותף שלכם
+            התקציב המשפחתי
+            המשותף שלכם
           </p>
 
           <form
@@ -1870,8 +1984,6 @@ export default function BudgetApp() {
       className="shell"
       dir="rtl"
     >
-      {/* HEADER */}
-
       <header className="topbar">
         <div>
           <div className="title">
@@ -1894,8 +2006,6 @@ export default function BudgetApp() {
           יציאה
         </button>
       </header>
-
-      {/* NAVIGATION */}
 
       <nav className="tabs">
         {[
@@ -1935,11 +2045,13 @@ export default function BudgetApp() {
                 onClick={() => {
                   const date =
                     new Date(
-                      month + "-15"
+                      month +
+                        "-15"
                     );
 
                   date.setMonth(
-                    date.getMonth() - 1
+                    date.getMonth() -
+                      1
                   );
 
                   setMonth(
@@ -1952,7 +2064,8 @@ export default function BudgetApp() {
 
               <strong>
                 {new Date(
-                  month + "-15"
+                  month +
+                    "-15"
                 ).toLocaleDateString(
                   "he-IL",
                   {
@@ -1966,11 +2079,13 @@ export default function BudgetApp() {
                 onClick={() => {
                   const date =
                     new Date(
-                      month + "-15"
+                      month +
+                        "-15"
                     );
 
                   date.setMonth(
-                    date.getMonth() + 1
+                    date.getMonth() +
+                      1
                   );
 
                   setMonth(
@@ -2002,7 +2117,8 @@ export default function BudgetApp() {
 
               <div
                 style={{
-                  display: "grid",
+                  display:
+                    "grid",
                   gridTemplateColumns:
                     "1fr 1fr",
                   gap: 12,
@@ -2051,13 +2167,16 @@ export default function BudgetApp() {
 
               <small
                 style={{
-                  display: "block",
+                  display:
+                    "block",
                   marginTop: 10,
-                  opacity: 0.75,
+                  opacity:
+                    0.75,
                 }}
               >
                 הכנסות בפועל פחות
-                הוצאות שחויבו בפועל
+                הוצאות שחויבו
+                בפועל
               </small>
             </div>
 
@@ -2068,7 +2187,8 @@ export default function BudgetApp() {
               }}
             >
               <h2>
-                כמה נשאר מהוצאות קבועות
+                כמה נשאר מהוצאות
+                קבועות
               </h2>
 
               <div className="row">
@@ -2098,12 +2218,15 @@ export default function BudgetApp() {
               <div
                 style={{
                   height: 16,
-                  borderRadius: 999,
-                  overflow: "hidden",
+                  borderRadius:
+                    999,
+                  overflow:
+                    "hidden",
                   background:
                     "#e9eaf0",
                   marginTop: 16,
-                  display: "flex",
+                  display:
+                    "flex",
                 }}
               >
                 <div
@@ -2128,7 +2251,8 @@ export default function BudgetApp() {
 
               <div
                 style={{
-                  display: "flex",
+                  display:
+                    "flex",
                   justifyContent:
                     "space-between",
                   marginTop: 10,
@@ -2161,8 +2285,8 @@ export default function BudgetApp() {
                 }}
               >
                 <span>
-                  סה״כ הוצאות קבועות
-                  מתוכננות
+                  סה״כ הוצאות
+                  קבועות מתוכננות
                 </span>
 
                 <b>
@@ -2186,12 +2310,15 @@ export default function BudgetApp() {
               <div
                 style={{
                   height: 18,
-                  borderRadius: 999,
-                  overflow: "hidden",
+                  borderRadius:
+                    999,
+                  overflow:
+                    "hidden",
                   background:
                     "#e9eaf0",
                   marginTop: 16,
-                  display: "flex",
+                  display:
+                    "flex",
                 }}
               >
                 <div
@@ -2215,7 +2342,8 @@ export default function BudgetApp() {
 
               <div
                 style={{
-                  display: "grid",
+                  display:
+                    "grid",
                   gridTemplateColumns:
                     "1fr 1fr",
                   gap: 20,
@@ -2225,23 +2353,10 @@ export default function BudgetApp() {
                 <div>
                   <div
                     style={{
-                      fontSize: 13,
+                      fontSize:
+                        13,
                     }}
                   >
-                    <span
-                      style={{
-                        display:
-                          "inline-block",
-                        width: 10,
-                        height: 10,
-                        borderRadius:
-                          "50%",
-                        background:
-                          "#5964d8",
-                        marginLeft: 6,
-                      }}
-                    />
-
                     קבועות
                   </div>
 
@@ -2273,24 +2388,11 @@ export default function BudgetApp() {
                 >
                   <div
                     style={{
-                      fontSize: 13,
+                      fontSize:
+                        13,
                     }}
                   >
                     משתנות
-
-                    <span
-                      style={{
-                        display:
-                          "inline-block",
-                        width: 10,
-                        height: 10,
-                        borderRadius:
-                          "50%",
-                        background:
-                          "#78b9a4",
-                        marginRight: 6,
-                      }}
-                    />
                   </div>
 
                   <b>
@@ -2317,14 +2419,15 @@ export default function BudgetApp() {
 
             <div className="panel">
               <h2>
-                פירוט הוצאות לפי קטגוריה
+                פירוט הוצאות לפי
+                קטגוריה
               </h2>
 
               {categoryBreakdown.length ===
               0 ? (
                 <p className="muted">
-                  אין עדיין הוצאות שחויבו
-                  בחודש הזה.
+                  אין עדיין הוצאות
+                  שחויבו בחודש הזה.
                 </p>
               ) : (
                 <div
@@ -2353,7 +2456,6 @@ export default function BudgetApp() {
                               "space-between",
                             alignItems:
                               "center",
-                            gap: 10,
                           }}
                         >
                           <b>
@@ -2400,7 +2502,8 @@ export default function BudgetApp() {
                           {category.percent.toFixed(
                             0
                           )}
-                          % מהוצאות החודש
+                          % מהוצאות
+                          החודש
                         </small>
                       </div>
                     )
@@ -2418,8 +2521,8 @@ export default function BudgetApp() {
                 }}
               >
                 <span>
-                  בפועל + קבועות שטרם
-                  חויבו
+                  בפועל + קבועות
+                  שטרם חויבו
                 </span>
 
                 <b>
@@ -2468,7 +2571,8 @@ export default function BudgetApp() {
             {currentTransactions.length ===
             0 ? (
               <p className="muted">
-                אין תנועות בחודש הזה.
+                אין תנועות בחודש
+                הזה.
               </p>
             ) : (
               <div className="txList">
@@ -2494,10 +2598,9 @@ export default function BudgetApp() {
                       );
 
                     const amount =
-                      transaction.actual_amount !==
-                        null &&
-                      transaction.actual_amount !==
-                        undefined
+                      hasActualAmount(
+                        transaction
+                      )
                         ? transaction.actual_amount
                         : transaction.planned_amount;
 
@@ -2594,7 +2697,8 @@ export default function BudgetApp() {
                                 <>
                                   {" · "}
                                   <span>
-                                    ממתין לחיוב
+                                    ממתין
+                                    לחיוב
                                   </span>
                                 </>
                               )}
@@ -2693,7 +2797,8 @@ export default function BudgetApp() {
             {recurring.length ===
             0 ? (
               <p className="muted">
-                אין הוצאות קבועות עדיין.
+                אין הוצאות קבועות
+                עדיין.
               </p>
             ) : (
               <div>
@@ -2898,7 +3003,9 @@ export default function BudgetApp() {
               <button
                 className="primary small"
                 onClick={() =>
-                  setModal("category")
+                  setModal(
+                    "category"
+                  )
                 }
               >
                 + קטגוריה
@@ -2941,7 +3048,8 @@ export default function BudgetApp() {
           TRANSACTION MODAL
          ===================================================== */}
 
-      {modal === "transaction" && (
+      {modal ===
+        "transaction" && (
         <Modal
           title={
             editingTransaction
@@ -2971,34 +3079,29 @@ export default function BudgetApp() {
                   const kind =
                     event.target.value;
 
+                  setSaveError("");
+
                   setTransactionForm(
                     (current) => ({
                       ...current,
+
                       kind,
 
+                      /*
+                       * When switching between
+                       * expense and income we do NOT
+                       * destroy the existing amounts.
+                       */
+
                       expense_type:
-                        kind === "expense"
-                          ? current.expense_type ||
-                            "variable"
-                          : current.expense_type,
+                        current.expense_type ||
+                        "variable",
 
                       income_type:
                         current.income_type ||
                         "variable",
-
-                      /*
-                       * When switching to income,
-                       * don't leave a stale fixed
-                       * checkbox state in the form.
-                       */
-                      completed:
-                        kind === "income"
-                          ? true
-                          : current.completed,
                     })
                   );
-
-                  setTransactionSaveError("");
                 }}
               >
                 <option value="expense">
@@ -3105,60 +3208,130 @@ export default function BudgetApp() {
             </label>
 
             {/* =================================================
-                EXPENSE / INCOME TYPE
+                EXPENSE TYPE
                ================================================= */}
 
             {transactionForm.kind ===
             "expense" ? (
-              <div>
+              <>
                 <label>
                   סוג ההוצאה
-
-                  <select
-                    value={
-                      transactionForm.expense_type ||
-                      "variable"
-                    }
-                    onChange={(event) =>
-                      changeExpenseType(
-                        event.target.value
-                      )
-                    }
-                  >
-                    <option value="variable">
-                      הוצאה משתנה
-                    </option>
-
-                    <option value="fixed">
-                      הוצאה קבועה
-                    </option>
-                  </select>
                 </label>
 
-                {/* ===========================================
-                    VARIABLE EXPENSE
-                   =========================================== */}
+                <div
+                  style={{
+                    display:
+                      "grid",
+                    gridTemplateColumns:
+                      "1fr 1fr",
+                    gap: 8,
+                    marginTop:
+                      -8,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      changeExpenseType(
+                        "variable"
+                      )
+                    }
+                    style={{
+                      padding:
+                        "13px 10px",
+                      borderRadius:
+                        12,
+                      border:
+                        transactionForm.expense_type ===
+                        "variable"
+                          ? "2px solid #5964d8"
+                          : "1px solid #ddd",
+                      background:
+                        transactionForm.expense_type ===
+                        "variable"
+                          ? "#eef0ff"
+                          : "white",
+                      fontWeight:
+                        transactionForm.expense_type ===
+                        "variable"
+                          ? 700
+                          : 500,
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    משתנה
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      changeExpenseType(
+                        "fixed"
+                      )
+                    }
+                    style={{
+                      padding:
+                        "13px 10px",
+                      borderRadius:
+                        12,
+                      border:
+                        transactionForm.expense_type ===
+                        "fixed"
+                          ? "2px solid #5964d8"
+                          : "1px solid #ddd",
+                      background:
+                        transactionForm.expense_type ===
+                        "fixed"
+                          ? "#eef0ff"
+                          : "white",
+                      fontWeight:
+                        transactionForm.expense_type ===
+                        "fixed"
+                          ? 700
+                          : 500,
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    קבועה
+                  </button>
+                </div>
+
+                {/* =================================================
+                    VARIABLE
+                   ================================================= */}
 
                 {transactionForm.expense_type ===
                   "variable" && (
                   <div
                     style={{
-                      marginTop: 12,
-                      padding: 12,
-                      borderRadius: 10,
+                      padding:
+                        12,
+                      borderRadius:
+                        12,
                       background:
-                        "#f6f6f8",
+                        "#f5f6fb",
+                      border:
+                        "1px solid #e5e6ef",
                     }}
                   >
-                    <strong>
-                      הוצאה משתנה
-                    </strong>
-
-                    <label
+                    <small
+                      className="muted"
                       style={{
-                        marginTop: 10,
+                        display:
+                          "block",
+                        marginBottom:
+                          8,
                       }}
                     >
+                      הוצאה משתנה –
+                      מזינים רק את
+                      הסכום ששולם
+                      בפועל
+                    </small>
+
+                    <label>
                       סכום בפועל
 
                       <input
@@ -3181,30 +3354,39 @@ export default function BudgetApp() {
                   </div>
                 )}
 
-                {/* ===========================================
-                    FIXED EXPENSE
-                   =========================================== */}
+                {/* =================================================
+                    FIXED
+                   ================================================= */}
 
                 {transactionForm.expense_type ===
                   "fixed" && (
                   <div
                     style={{
-                      marginTop: 12,
-                      padding: 12,
-                      borderRadius: 10,
+                      padding:
+                        12,
+                      borderRadius:
+                        12,
                       background:
-                        "#f6f6f8",
+                        "#f5f6fb",
+                      border:
+                        "1px solid #e5e6ef",
                     }}
                   >
-                    <strong>
-                      הוצאה קבועה
-                    </strong>
-
-                    <label
+                    <small
+                      className="muted"
                       style={{
-                        marginTop: 10,
+                        display:
+                          "block",
+                        marginBottom:
+                          8,
                       }}
                     >
+                      הוצאה קבועה –
+                      יש סכום מתוכנן
+                      וסכום בפועל
+                    </small>
+
+                    <label>
                       סכום מתוכנן
 
                       <input
@@ -3225,11 +3407,7 @@ export default function BudgetApp() {
                       />
                     </label>
 
-                    <label
-                      style={{
-                        marginTop: 10,
-                      }}
-                    >
+                    <label>
                       סכום בפועל
 
                       <input
@@ -3249,12 +3427,7 @@ export default function BudgetApp() {
                       />
                     </label>
 
-                    <label
-                      className="check"
-                      style={{
-                        marginTop: 10,
-                      }}
-                    >
+                    <label className="check">
                       <input
                         type="checkbox"
                         checked={
@@ -3272,48 +3445,105 @@ export default function BudgetApp() {
                     </label>
 
                     <small className="muted">
-                      אם מסמנים כחויב ולא
-                      מזינים סכום בפועל,
-                      הסכום המתוכנן ייחשב
+                      אם מסמנים כחויב
+                      ולא מזינים סכום
+                      בפועל, הסכום
+                      המתוכנן ייחשב
                       כסכום בפועל.
                     </small>
                   </div>
                 )}
-              </div>
+              </>
             ) : (
-              <label>
-                סוג ההכנסה
-
-                <select
-                  value={
-                    transactionForm.income_type ||
-                    "variable"
-                  }
-                  onChange={(event) =>
-                    updateTransactionField(
-                      "income_type",
-                      event.target.value
-                    )
-                  }
-                >
-                  <option value="variable">
-                    משתנה
-                  </option>
-
-                  <option value="fixed">
-                    קבועה
-                  </option>
-                </select>
-              </label>
-            )}
-
-            {/* =================================================
-                INCOME
-               ================================================= */}
-
-            {transactionForm.kind ===
-              "income" && (
               <>
+                {/* INCOME TYPE */}
+
+                <label>
+                  סוג ההכנסה
+                </label>
+
+                <div
+                  style={{
+                    display:
+                      "grid",
+                    gridTemplateColumns:
+                      "1fr 1fr",
+                    gap: 8,
+                    marginTop:
+                      -8,
+                  }}
+                >
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateTransactionField(
+                        "income_type",
+                        "variable"
+                      )
+                    }
+                    style={{
+                      padding:
+                        "13px 10px",
+                      borderRadius:
+                        12,
+                      border:
+                        transactionForm.income_type ===
+                        "variable"
+                          ? "2px solid #5964d8"
+                          : "1px solid #ddd",
+                      background:
+                        transactionForm.income_type ===
+                        "variable"
+                          ? "#eef0ff"
+                          : "white",
+                      fontWeight:
+                        transactionForm.income_type ===
+                        "variable"
+                          ? 700
+                          : 500,
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    משתנה
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateTransactionField(
+                        "income_type",
+                        "fixed"
+                      )
+                    }
+                    style={{
+                      padding:
+                        "13px 10px",
+                      borderRadius:
+                        12,
+                      border:
+                        transactionForm.income_type ===
+                        "fixed"
+                          ? "2px solid #5964d8"
+                          : "1px solid #ddd",
+                      background:
+                        transactionForm.income_type ===
+                        "fixed"
+                          ? "#eef0ff"
+                          : "white",
+                      fontWeight:
+                        transactionForm.income_type ===
+                        "fixed"
+                          ? 700
+                          : 500,
+                      cursor:
+                        "pointer",
+                    }}
+                  >
+                    קבועה
+                  </button>
+                </div>
+
                 <label>
                   סכום בפועל
 
@@ -3507,7 +3737,7 @@ export default function BudgetApp() {
 
             {/* SAVE ERROR */}
 
-            {transactionSaveError && (
+            {saveError && (
               <div
                 className="error"
                 style={{
@@ -3515,7 +3745,7 @@ export default function BudgetApp() {
                     "pre-line",
                 }}
               >
-                {transactionSaveError}
+                {saveError}
               </div>
             )}
 
@@ -3523,18 +3753,17 @@ export default function BudgetApp() {
 
             <div
               style={{
-                display: "flex",
+                display:
+                  "flex",
                 gap: 8,
               }}
             >
               <button
                 className="primary"
                 type="submit"
-                disabled={
-                  savingTransaction
-                }
+                disabled={saving}
               >
-                {savingTransaction
+                {saving
                   ? "שומרת…"
                   : "שמירה"}
               </button>
@@ -3545,9 +3774,7 @@ export default function BudgetApp() {
                 onClick={
                   closeTransactionModal
                 }
-                disabled={
-                  savingTransaction
-                }
+                disabled={saving}
               >
                 ביטול
               </button>
@@ -3560,7 +3787,8 @@ export default function BudgetApp() {
           RECURRING MODAL
          ===================================================== */}
 
-      {modal === "recurring" && (
+      {modal ===
+        "recurring" && (
         <Modal
           title={
             editingRecurring
@@ -3749,21 +3977,37 @@ export default function BudgetApp() {
               />
             </label>
 
+            {saveError && (
+              <div
+                className="error"
+                style={{
+                  whiteSpace:
+                    "pre-line",
+                }}
+              >
+                {saveError}
+              </div>
+            )}
+
             <button
               className="primary"
               type="submit"
+              disabled={saving}
             >
-              שמירה
+              {saving
+                ? "שומרת…"
+                : "שמירה"}
             </button>
           </form>
         </Modal>
       )}
 
       {/* =====================================================
-          CHARGE RECURRING MODAL
+          CHARGE MODAL
          ===================================================== */}
 
-      {modal === "charge" &&
+      {modal ===
+        "charge" &&
         chargingRecurring && (
           <Modal
             title={`חיוב: ${chargingRecurring.name}`}
@@ -3780,7 +4024,8 @@ export default function BudgetApp() {
               <div
                 style={{
                   padding: 12,
-                  borderRadius: 10,
+                  borderRadius:
+                    10,
                   background:
                     "#f6f6f8",
                 }}
@@ -3925,11 +4170,26 @@ export default function BudgetApp() {
                 />
               </label>
 
+              {saveError && (
+                <div
+                  className="error"
+                  style={{
+                    whiteSpace:
+                      "pre-line",
+                  }}
+                >
+                  {saveError}
+                </div>
+              )}
+
               <button
                 className="primary"
                 type="submit"
+                disabled={saving}
               >
-                אישור חיוב
+                {saving
+                  ? "שומרת…"
+                  : "אישור חיוב"}
               </button>
             </form>
           </Modal>
@@ -3939,7 +4199,8 @@ export default function BudgetApp() {
           CATEGORY MODAL
          ===================================================== */}
 
-      {modal === "category" && (
+      {modal ===
+        "category" && (
         <Modal
           title="קטגוריה חדשה"
           onClose={() =>
