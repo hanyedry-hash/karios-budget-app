@@ -22,27 +22,19 @@ const money = (v) =>
 const dateText = (v) => {
   if (!v) return "";
 
-  return new Date(`${v}T00:00:00`).toLocaleDateString(
-    "he-IL"
-  );
+  return new Date(`${v}T00:00:00`).toLocaleDateString("he-IL");
 };
 
 const monthKey = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
-    2,
-    "0"
-  )}`;
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
 const monthLabel = (m) => {
   const [y, mo] = m.split("-").map(Number);
 
-  return new Date(y, mo - 1, 1).toLocaleDateString(
-    "he-IL",
-    {
-      month: "long",
-      year: "numeric",
-    }
-  );
+  return new Date(y, mo - 1, 1).toLocaleDateString("he-IL", {
+    month: "long",
+    year: "numeric",
+  });
 };
 
 const shiftMonth = (m, n) => {
@@ -59,9 +51,7 @@ const emptyTx = () => ({
   planned_amount: "",
   actual_amount: "",
   person_user_id: "",
-  transaction_date: new Date()
-    .toISOString()
-    .slice(0, 10),
+  transaction_date: new Date().toISOString().slice(0, 10),
   note: "",
   payment_method: "",
   merchant: "",
@@ -212,9 +202,7 @@ function detectCardLast4(text, fileName = "") {
     .replace(/\uFEFF/g, "")
     .replace(/\r/g, " ");
 
-  const source = `${value} ${String(
-    fileName || ""
-  )}`;
+  const source = `${value} ${String(fileName || "")}`;
 
   const patterns = [
     /מסתיים\s*ב?\s*[-–—:]?\s*(\d{4})/i,
@@ -230,25 +218,16 @@ function detectCardLast4(text, fileName = "") {
     }
   }
 
-  /*
-    Fallback:
-    Look for a four digit sequence in the filename,
-    but only when the filename strongly looks like
-    a credit-card export.
-  */
-  const fileText = String(
-    fileName || ""
-  );
+  const fileText = String(fileName || "");
 
   if (
     /csv|אשראי|כרטיס|card|isracard|flycard|cal/i.test(
       fileText
     )
   ) {
-    const fileMatch =
-      fileText.match(
-        /(?:^|[^\d])(\d{4})(?:[^\d]|$)/
-      );
+    const fileMatch = fileText.match(
+      /(?:^|[^\d])(\d{4})(?:[^\d]|$)/
+    );
 
     if (fileMatch?.[1]) {
       return fileMatch[1];
@@ -274,8 +253,7 @@ function parseCSV(text) {
     ""
   );
 
-  const delimiter =
-    detectDelimiter(input);
+  const delimiter = detectDelimiter(input);
 
   const rows = [];
   let row = [];
@@ -334,19 +312,13 @@ function parseCSV(text) {
     cell += char;
   }
 
-  if (
-    cell !== "" ||
-    row.length
-  ) {
+  if (cell !== "" || row.length) {
     row.push(cell);
     rows.push(row);
   }
 
   return rows.filter((r) =>
-    r.some(
-      (c) =>
-        String(c || "").trim() !== ""
-    )
+    r.some((c) => String(c || "").trim() !== "")
   );
 }
 
@@ -397,11 +369,8 @@ function findHeaderIndex(headers, variants) {
           normalizeHeader(header);
 
         return (
-          normalized ===
-            normalizedVariant ||
-          normalized.includes(
-            normalizedVariant
-          )
+          normalized === normalizedVariant ||
+          normalized.includes(normalizedVariant)
         );
       }
     );
@@ -435,7 +404,7 @@ function guessCategoryName(
   }
 
   if (
-    /מסעד|קפה|קפה |coffee|restaurant|פיצה|פסטה|בורגר|רוקו|בובה|על הנהר/i.test(
+    /מסעד|קפה|coffee|restaurant|פיצה|פסטה|בורגר|רוקו|בובה|על הנהר/i.test(
       text
     )
   ) {
@@ -513,18 +482,14 @@ function findCategoryIdByName(
   categories,
   name
 ) {
-  const normalized = normalizeText(
-    name
-  ).toLowerCase();
+  const normalized =
+    normalizeText(name).toLowerCase();
 
-  const exact =
-    categories.find(
-      (category) =>
-        normalizeText(
-          category.name
-        ).toLowerCase() ===
-        normalized
-    );
+  const exact = categories.find(
+    (category) =>
+      normalizeText(category.name).toLowerCase() ===
+      normalized
+  );
 
   return exact?.id || "";
 }
@@ -558,12 +523,9 @@ function makeImportKey(row) {
     row.credit_card_provider || "",
     row.credit_card_last4 || "",
     row.transaction_date || "",
-    Number(
-      row.actual_amount || 0
-    ).toFixed(2),
+    Number(row.actual_amount || 0).toFixed(2),
     normalizeText(
-      row.merchant ||
-        row.description
+      row.merchant || row.description
     ).toLowerCase(),
   ].join("|");
 }
@@ -645,9 +607,7 @@ function parseCreditFile(
   }
 
   const headers =
-    rows[headerRowIndex].map(
-      normalizeText
-    );
+    rows[headerRowIndex].map(normalizeText);
 
   const dateIndex =
     findHeaderIndex(headers, [
@@ -677,7 +637,7 @@ function parseCreditFile(
       "סכום חיוב",
       "סכום\nחיוב",
       "סכום חיוב בשח",
-      "סכום חיוב בש\"ח",
+      'סכום חיוב בש"ח',
       "charge amount",
       "charged amount",
       "amount charged",
@@ -751,43 +711,27 @@ function parseCreditFile(
     const row = rows[i];
 
     const transactionDate =
-      normalizeDate(
-        row[dateIndex]
-      );
+      normalizeDate(row[dateIndex]);
 
     if (!transactionDate) {
       continue;
     }
 
     const merchant =
-      normalizeText(
-        row[merchantIndex]
-      );
+      normalizeText(row[merchantIndex]);
 
     if (!merchant) {
       continue;
     }
 
-    /*
-      IMPORTANT:
-      The actual amount is always the charge amount
-      when that column exists.
-      
-      Only if there is no charge column at all,
-      use purchase amount.
-    */
     const chargeAmount =
       chargeIndex >= 0
-        ? cleanAmount(
-            row[chargeIndex]
-          )
+        ? cleanAmount(row[chargeIndex])
         : null;
 
     const purchaseAmount =
       purchaseIndex >= 0
-        ? cleanAmount(
-            row[purchaseIndex]
-          )
+        ? cleanAmount(row[purchaseIndex])
         : null;
 
     const actualAmount =
@@ -797,9 +741,7 @@ function parseCreditFile(
 
     if (
       actualAmount === null ||
-      !Number.isFinite(
-        actualAmount
-      )
+      !Number.isFinite(actualAmount)
     ) {
       continue;
     }
@@ -810,23 +752,17 @@ function parseCreditFile(
 
     const transactionType =
       typeIndex >= 0
-        ? normalizeText(
-            row[typeIndex]
-          )
+        ? normalizeText(row[typeIndex])
         : "";
 
     const branch =
       branchIndex >= 0
-        ? normalizeText(
-            row[branchIndex]
-          )
+        ? normalizeText(row[branchIndex])
         : "";
 
     const notes =
       notesIndex >= 0
-        ? normalizeText(
-            row[notesIndex]
-          )
+        ? normalizeText(row[notesIndex])
         : "";
 
     const categoryName =
@@ -850,82 +786,32 @@ function parseCreditFile(
         transactionType,
       });
 
+    const baseRow = {
+      description: merchant,
+      merchant,
+      category_id: categoryId || "",
+      category_name: categoryName,
+      transaction_date: transactionDate,
+      actual_amount: actualAmount,
+      planned_amount: actualAmount,
+      expense_type: recurringFlag
+        ? "fixed"
+        : "variable",
+      transactionType,
+      branch,
+      notes,
+      payment_method: "credit_card",
+      credit_card_provider: provider,
+      credit_card_last4: cardLast4,
+      recurringCandidate: recurringFlag,
+    };
+
     result.push({
       id: `import-${i}-${Math.random()
         .toString(36)
         .slice(2)}`,
-
-      description:
-        merchant,
-
-      merchant,
-
-      category_id:
-        categoryId || "",
-
-      category_name:
-        categoryName,
-
-      transaction_date:
-        transactionDate,
-
-      actual_amount:
-        actualAmount,
-
-      /*
-        Variable = actual only.
-        Fixed = planned + actual.
-        
-        The DB still receives actual in planned_amount
-        for compatibility with the existing schema,
-        but the UI does not display it as planned
-        for variable expenses.
-      */
-      planned_amount:
-        actualAmount,
-
-      expense_type:
-        recurringFlag
-          ? "fixed"
-          : "variable",
-
-      transactionType,
-
-      branch,
-
-      notes,
-
-      payment_method:
-        "credit_card",
-
-      credit_card_provider:
-        provider,
-
-      credit_card_last4:
-        cardLast4,
-
-      recurringCandidate:
-        recurringFlag,
-
-      importKey:
-        makeImportKey({
-          credit_card_provider:
-            provider,
-
-          credit_card_last4:
-            cardLast4,
-
-          transaction_date:
-            transactionDate,
-
-          actual_amount:
-            actualAmount,
-
-          merchant,
-
-          description:
-            merchant,
-        }),
+      ...baseRow,
+      importKey: makeImportKey(baseRow),
     });
   }
 
@@ -942,115 +828,58 @@ function parseCreditFile(
 
 export default function BudgetApp() {
   const [user, setUser] = useState(null);
+  const [household, setHousehold] = useState(null);
+  const [profiles, setProfiles] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [recurring, setRecurring] = useState([]);
 
-  const [household, setHousehold] =
+  const [month, setMonth] = useState(monthKey());
+  const [tab, setTab] = useState("dashboard");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [modal, setModal] = useState(null);
+  const [editingTx, setEditingTx] = useState(null);
+  const [editingRecurring, setEditingRecurring] =
     useState(null);
 
-  const [profiles, setProfiles] =
-    useState([]);
-
-  const [categories, setCategories] =
-    useState([]);
-
-  const [transactions, setTransactions] =
-    useState([]);
-
-  const [recurring, setRecurring] =
-    useState([]);
-
-  const [month, setMonth] =
-    useState(monthKey());
-
-  const [tab, setTab] =
-    useState("dashboard");
-
-  const [loading, setLoading] =
-    useState(true);
-
-  const [saving, setSaving] =
-    useState(false);
-
-  const [error, setError] =
-    useState("");
-
-  const [modal, setModal] =
-    useState(null);
-
-  const [editingTx, setEditingTx] =
-    useState(null);
-
-  const [
-    editingRecurring,
-    setEditingRecurring,
-  ] = useState(null);
-
-  const [txForm, setTxForm] =
-    useState(emptyTx());
-
+  const [txForm, setTxForm] = useState(emptyTx());
   const [recForm, setRecForm] =
     useState(emptyRecurring());
 
-  const [email, setEmail] =
-    useState("");
-
-  const [password, setPassword] =
-    useState("");
-
-  const [loginError, setLoginError] =
-    useState("");
-
-  const [newCategory, setNewCategory] =
-    useState("");
-
-  const [confirm, setConfirm] =
-    useState(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [newCategory, setNewCategory] = useState("");
+  const [confirm, setConfirm] = useState(null);
 
   /* Credit import state */
 
-  const [
-    importFile,
-    setImportFile,
-  ] = useState(null);
+  const [importFile, setImportFile] = useState(null);
+  const [importProvider, setImportProvider] =
+    useState("");
+  const [importPreview, setImportPreview] =
+    useState([]);
+  const [importFileInfo, setImportFileInfo] =
+    useState(null);
+  const [importLoading, setImportLoading] =
+    useState(false);
+  const [importSaving, setImportSaving] =
+    useState(false);
+  const [importMessage, setImportMessage] =
+    useState("");
+  const [importError, setImportError] =
+    useState("");
+  const [importSelected, setImportSelected] =
+    useState({});
 
-  const [
-    importProvider,
-    setImportProvider,
-  ] = useState("");
+  /* Date filter for credit import */
 
-  const [
-    importPreview,
-    setImportPreview,
-  ] = useState([]);
-
-  const [
-    importFileInfo,
-    setImportFileInfo,
-  ] = useState(null);
-
-  const [
-    importLoading,
-    setImportLoading,
-  ] = useState(false);
-
-  const [
-    importSaving,
-    setImportSaving,
-  ] = useState(false);
-
-  const [
-    importMessage,
-    setImportMessage,
-  ] = useState("");
-
-  const [
-    importError,
-    setImportError,
-  ] = useState("");
-
-  const [
-    importSelected,
-    setImportSelected,
-  ] = useState({});
+  const [importFromDate, setImportFromDate] =
+    useState("");
+  const [importToDate, setImportToDate] =
+    useState("");
 
   /* =====================================================
      AUTH
@@ -1064,23 +893,16 @@ export default function BudgetApp() {
       .then(({ data }) => {
         if (!mounted) return;
 
-        setUser(
-          data.session?.user || null
-        );
-
+        setUser(data.session?.user || null);
         setLoading(false);
       });
 
     const {
-      data: {
-        subscription,
-      },
+      data: { subscription },
     } =
       supabase.auth.onAuthStateChange(
         (_event, session) => {
-          setUser(
-            session?.user || null
-          );
+          setUser(session?.user || null);
         }
       );
 
@@ -1184,9 +1006,7 @@ export default function BudgetApp() {
           ),
 
         supabase
-          .from(
-            "recurring_expenses"
-          )
+          .from("recurring_expenses")
           .select("*")
           .eq(
             "household_id",
@@ -1196,9 +1016,7 @@ export default function BudgetApp() {
             "is_active",
             true
           )
-          .order(
-            "day_of_month"
-          )
+          .order("day_of_month")
           .order("name"),
       ]);
 
@@ -1216,9 +1034,7 @@ export default function BudgetApp() {
         );
       }
 
-      if (
-        transactionsResult.error
-      ) {
+      if (transactionsResult.error) {
         console.error(
           "Transactions error:",
           transactionsResult.error
@@ -1236,30 +1052,25 @@ export default function BudgetApp() {
         membersResult.data || [];
 
       setProfiles(
-        members.map(
-          (member) => ({
-            id: member.user_id,
-            display_name:
-              member.display_name ||
-              "ללא שם",
-            role: member.role,
-          })
-        )
+        members.map((member) => ({
+          id: member.user_id,
+          display_name:
+            member.display_name ||
+            "ללא שם",
+          role: member.role,
+        }))
       );
 
       setCategories(
-        categoriesResult.data ||
-          []
+        categoriesResult.data || []
       );
 
       setTransactions(
-        transactionsResult.data ||
-          []
+        transactionsResult.data || []
       );
 
       setRecurring(
-        recurringResult.data ||
-          []
+        recurringResult.data || []
       );
     } catch (e) {
       console.error(e);
@@ -1279,12 +1090,10 @@ export default function BudgetApp() {
     setLoginError("");
 
     const { error } =
-      await supabase.auth.signInWithPassword(
-        {
-          email: email.trim(),
-          password,
-        }
-      );
+      await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
     if (error) {
       setLoginError(
@@ -1311,12 +1120,10 @@ export default function BudgetApp() {
     if (transaction) {
       setTxForm({
         description:
-          transaction.description ||
-          "",
+          transaction.description || "",
 
         category_id:
-          transaction.category_id ||
-          "",
+          transaction.category_id || "",
 
         expense_type:
           transaction.expense_type ||
@@ -1331,8 +1138,7 @@ export default function BudgetApp() {
           "",
 
         person_user_id:
-          transaction.person_user_id ||
-          "",
+          transaction.person_user_id || "",
 
         transaction_date:
           transaction.transaction_date ||
@@ -1384,10 +1190,7 @@ export default function BudgetApp() {
   async function saveTx(event) {
     event.preventDefault();
 
-    if (
-      saving ||
-      !household
-    ) {
+    if (saving || !household) {
       return;
     }
 
@@ -1414,8 +1217,7 @@ export default function BudgetApp() {
 
     const planned =
       kind === "expense" &&
-      form.expense_type ===
-        "fixed"
+      form.expense_type === "fixed"
         ? Number(
             form.planned_amount
           )
@@ -1437,12 +1239,9 @@ export default function BudgetApp() {
 
     if (
       kind === "expense" &&
-      form.expense_type ===
-        "fixed" &&
+      form.expense_type === "fixed" &&
       (
-        !Number.isFinite(
-          planned
-        ) ||
+        !Number.isFinite(planned) ||
         planned < 0
       )
     ) {
@@ -1455,9 +1254,7 @@ export default function BudgetApp() {
     if (
       actual !== null &&
       (
-        !Number.isFinite(
-          actual
-        ) ||
+        !Number.isFinite(actual) ||
         actual < 0
       )
     ) {
@@ -1470,9 +1267,7 @@ export default function BudgetApp() {
     if (
       kind === "income" &&
       (
-        !Number.isFinite(
-          actual
-        ) ||
+        !Number.isFinite(actual) ||
         actual < 0
       )
     ) {
@@ -1494,16 +1289,14 @@ export default function BudgetApp() {
       description,
 
       category_id:
-        form.category_id ||
-        null,
+        form.category_id || null,
 
       transaction_date:
         form.transaction_date,
 
       planned_amount:
         kind === "expense" &&
-        form.expense_type ===
-          "fixed"
+        form.expense_type === "fixed"
           ? planned
           : actual,
 
@@ -1521,8 +1314,7 @@ export default function BudgetApp() {
           : null,
 
       person_user_id:
-        form.person_user_id ||
-        null,
+        form.person_user_id || null,
 
       note:
         String(
@@ -1530,8 +1322,7 @@ export default function BudgetApp() {
         ).trim() || null,
 
       payment_method:
-        form.payment_method ||
-        null,
+        form.payment_method || null,
 
       merchant:
         String(
@@ -1543,10 +1334,7 @@ export default function BudgetApp() {
           form.credit_card_last4 ||
             ""
         )
-          .replace(
-            /\D/g,
-            ""
-          )
+          .replace(/\D/g, "")
           .slice(-4) || null,
 
       credit_card_provider:
@@ -1562,14 +1350,9 @@ export default function BudgetApp() {
       if (editingTx) {
         result =
           await supabase
-            .from(
-              "transactions"
-            )
+            .from("transactions")
             .update(row)
-            .eq(
-              "id",
-              editingTx.id
-            )
+            .eq("id", editingTx.id)
             .eq(
               "household_id",
               household.id
@@ -1579,9 +1362,7 @@ export default function BudgetApp() {
       } else {
         result =
           await supabase
-            .from(
-              "transactions"
-            )
+            .from("transactions")
             .insert(row)
             .select("*")
             .single();
@@ -1610,40 +1391,32 @@ export default function BudgetApp() {
      RECURRING EXPENSES
   ===================================================== */
 
-  function openRecurring(
-    item = null
-  ) {
+  function openRecurring(item = null) {
     setError("");
     setEditingRecurring(item);
 
     setRecForm(
       item
         ? {
-            name:
-              item.name || "",
+            name: item.name || "",
 
             category_id:
-              item.category_id ||
-              "",
+              item.category_id || "",
 
             planned_amount:
-              item.planned_amount ??
-              "",
+              item.planned_amount ?? "",
 
             day_of_month:
-              item.day_of_month ??
-              "1",
+              item.day_of_month ?? "1",
 
             payment_method:
-              item.payment_method ||
-              "",
+              item.payment_method || "",
 
             merchant:
               item.merchant || "",
 
             person_user_id:
-              item.person_user_id ||
-              "",
+              item.person_user_id || "",
 
             note:
               item.note || "",
@@ -1654,15 +1427,10 @@ export default function BudgetApp() {
     setModal("recurring");
   }
 
-  async function saveRecurring(
-    event
-  ) {
+  async function saveRecurring(event) {
     event.preventDefault();
 
-    if (
-      saving ||
-      !household
-    ) {
+    if (saving || !household) {
       return;
     }
 
@@ -1692,9 +1460,7 @@ export default function BudgetApp() {
     }
 
     if (
-      !Number.isFinite(
-        planned
-      ) ||
+      !Number.isFinite(planned) ||
       planned < 0
     ) {
       setError(
@@ -1704,9 +1470,7 @@ export default function BudgetApp() {
     }
 
     if (
-      !Number.isInteger(
-        day
-      ) ||
+      !Number.isInteger(day) ||
       day < 1 ||
       day > 31
     ) {
@@ -1721,13 +1485,10 @@ export default function BudgetApp() {
         household.id,
 
       name:
-        String(
-          form.name
-        ).trim(),
+        String(form.name).trim(),
 
       category_id:
-        form.category_id ||
-        null,
+        form.category_id || null,
 
       planned_amount:
         planned,
@@ -1736,8 +1497,7 @@ export default function BudgetApp() {
         day,
 
       person_user_id:
-        form.person_user_id ||
-        null,
+        form.person_user_id || null,
 
       is_active:
         true,
@@ -1748,8 +1508,7 @@ export default function BudgetApp() {
         ).trim() || null,
 
       payment_method:
-        form.payment_method ||
-        null,
+        form.payment_method || null,
 
       merchant:
         String(
@@ -1762,9 +1521,7 @@ export default function BudgetApp() {
     try {
       let result;
 
-      if (
-        editingRecurring
-      ) {
+      if (editingRecurring) {
         result =
           await supabase
             .from(
@@ -1811,9 +1568,7 @@ export default function BudgetApp() {
     }
   }
 
-  async function chargeRecurring(
-    item
-  ) {
+  async function chargeRecurring(item) {
     if (
       saving ||
       !household
@@ -1827,26 +1582,19 @@ export default function BudgetApp() {
           item.planned_amount
         )}`,
         String(
-          item.planned_amount ??
-            ""
+          item.planned_amount ?? ""
         )
       );
 
-    if (
-      actualText === null
-    ) {
+    if (actualText === null) {
       return;
     }
 
     const actual =
-      Number(
-        actualText
-      );
+      Number(actualText);
 
     if (
-      !Number.isFinite(
-        actual
-      ) ||
+      !Number.isFinite(actual) ||
       actual < 0
     ) {
       window.alert(
@@ -1863,9 +1611,7 @@ export default function BudgetApp() {
         data: existing,
         error: findError,
       } = await supabase
-        .from(
-          "transactions"
-        )
+        .from("transactions")
         .select("*")
         .eq(
           "recurring_expense_id",
@@ -1903,18 +1649,17 @@ export default function BudgetApp() {
           item.name,
 
         category_id:
-          item.category_id ||
-          null,
+          item.category_id || null,
 
         transaction_date:
-          `${month}-${String(
-            day
-          ).padStart(2, "0")}`,
+          `${month}-${String(day).padStart(
+            2,
+            "0"
+          )}`,
 
         planned_amount:
           Number(
-            item.planned_amount ||
-              0
+            item.planned_amount || 0
           ),
 
         completed:
@@ -1927,19 +1672,16 @@ export default function BudgetApp() {
           "fixed",
 
         person_user_id:
-          item.person_user_id ||
-          null,
+          item.person_user_id || null,
 
         note:
           item.note || null,
 
         payment_method:
-          item.payment_method ||
-          null,
+          item.payment_method || null,
 
         merchant:
-          item.merchant ||
-          null,
+          item.merchant || null,
 
         credit_card_provider:
           null,
@@ -1959,9 +1701,7 @@ export default function BudgetApp() {
       if (existing) {
         result =
           await supabase
-            .from(
-              "transactions"
-            )
+            .from("transactions")
             .update(row)
             .eq(
               "id",
@@ -1972,9 +1712,7 @@ export default function BudgetApp() {
       } else {
         result =
           await supabase
-            .from(
-              "transactions"
-            )
+            .from("transactions")
             .insert(row)
             .select("*")
             .single();
@@ -2002,18 +1740,11 @@ export default function BudgetApp() {
     setSaving(true);
 
     try {
-      const {
-        error,
-      } =
+      const { error } =
         await supabase
-          .from(
-            "transactions"
-          )
+          .from("transactions")
           .delete()
-          .eq(
-            "id",
-            tx.id
-          )
+          .eq("id", tx.id)
           .eq(
             "household_id",
             household.id
@@ -2034,25 +1765,18 @@ export default function BudgetApp() {
     }
   }
 
-  async function deleteRecurring(
-    item
-  ) {
+  async function deleteRecurring(item) {
     setConfirm(null);
     setSaving(true);
 
     try {
-      const {
-        error,
-      } =
+      const { error } =
         await supabase
           .from(
             "recurring_expenses"
           )
           .delete()
-          .eq(
-            "id",
-            item.id
-          )
+          .eq("id", item.id)
           .eq(
             "household_id",
             household.id
@@ -2093,13 +1817,9 @@ export default function BudgetApp() {
     setSaving(true);
 
     try {
-      const {
-        error,
-      } =
+      const { error } =
         await supabase
-          .from(
-            "categories"
-          )
+          .from("categories")
           .insert({
             household_id:
               household.id,
@@ -2135,11 +1855,11 @@ export default function BudgetApp() {
     setImportSelected({});
     setImportMessage("");
     setImportError("");
+    setImportFromDate("");
+    setImportToDate("");
   }
 
-  async function handleCreditFile(
-    event
-  ) {
+  async function handleCreditFile(event) {
     const file =
       event.target.files?.[0];
 
@@ -2177,9 +1897,7 @@ export default function BudgetApp() {
           file.name
         );
 
-      if (
-        !parsed.provider
-      ) {
+      if (!parsed.provider) {
         throw new Error(
           "לא הצלחתי לזהות אם הקובץ שייך לישראכרט או לכאל. בחרי את החברה ידנית."
         );
@@ -2287,9 +2005,7 @@ export default function BudgetApp() {
         selected
       );
 
-      if (
-        !enriched.length
-      ) {
+      if (!enriched.length) {
         setImportMessage(
           "לא נמצאו עסקאות לחיוב בקובץ."
         );
@@ -2308,9 +2024,7 @@ export default function BudgetApp() {
     }
   }
 
-  function toggleImportRow(
-    id
-  ) {
+  function toggleImportRow(id) {
     setImportSelected(
       (current) => ({
         ...current,
@@ -2321,33 +2035,32 @@ export default function BudgetApp() {
   }
 
   function selectAllImportRows() {
-    const next = {};
+    const next = {
+      ...importSelected,
+    };
 
-    importPreview.forEach(
+    filteredImportRows.forEach(
       (row) => {
         next[row.id] =
           !row.duplicate;
       }
     );
 
-    setImportSelected(
-      next
-    );
+    setImportSelected(next);
   }
 
   function deselectAllImportRows() {
-    const next = {};
+    const next = {
+      ...importSelected,
+    };
 
-    importPreview.forEach(
+    filteredImportRows.forEach(
       (row) => {
-        next[row.id] =
-          false;
+        next[row.id] = false;
       }
     );
 
-    setImportSelected(
-      next
-    );
+    setImportSelected(next);
   }
 
   function changeImportCategory(
@@ -2400,11 +2113,9 @@ export default function BudgetApp() {
     setImportMessage("");
 
     const selected =
-      importPreview.filter(
+      filteredImportRows.filter(
         (row) =>
-          importSelected[
-            row.id
-          ] &&
+          importSelected[row.id] &&
           !row.duplicate
       );
 
@@ -2420,20 +2131,16 @@ export default function BudgetApp() {
     try {
       const {
         data: latest,
-        error:
-          latestError,
-      } =
-        await supabase
-          .from(
-            "transactions"
-          )
-          .select(
-            "id,credit_card_provider,credit_card_last4,transaction_date,actual_amount,merchant,description"
-          )
-          .eq(
-            "household_id",
-            household.id
-          );
+        error: latestError,
+      } = await supabase
+        .from("transactions")
+        .select(
+          "id,credit_card_provider,credit_card_last4,transaction_date,actual_amount,merchant,description"
+        )
+        .eq(
+          "household_id",
+          household.id
+        );
 
       if (latestError) {
         throw latestError;
@@ -2552,9 +2259,7 @@ export default function BudgetApp() {
             })
           );
 
-      if (
-        !rowsToInsert.length
-      ) {
+      if (!rowsToInsert.length) {
         setImportMessage(
           "כל העסקאות שנבחרו כבר קיימות במערכת — לא נוצרו כפילויות."
         );
@@ -2563,13 +2268,9 @@ export default function BudgetApp() {
         return;
       }
 
-      const {
-        error,
-      } =
+      const { error } =
         await supabase
-          .from(
-            "transactions"
-          )
+          .from("transactions")
           .insert(
             rowsToInsert
           );
@@ -2699,8 +2400,7 @@ export default function BudgetApp() {
       (sum, t) =>
         sum +
         Number(
-          t.actual_amount ||
-            0
+          t.actual_amount || 0
         ),
       0
     );
@@ -2710,8 +2410,7 @@ export default function BudgetApp() {
       (sum, t) =>
         sum +
         Number(
-          t.actual_amount ||
-            0
+          t.actual_amount || 0
         ),
       0
     );
@@ -2727,8 +2426,7 @@ export default function BudgetApp() {
         (sum, t) =>
           sum +
           Number(
-            t.actual_amount ||
-              0
+            t.actual_amount || 0
           ),
         0
       );
@@ -2744,8 +2442,7 @@ export default function BudgetApp() {
         (sum, t) =>
           sum +
           Number(
-            t.actual_amount ||
-              0
+            t.actual_amount || 0
           ),
         0
       );
@@ -2778,8 +2475,7 @@ export default function BudgetApp() {
       (sum, r) =>
         sum +
         Number(
-          r.planned_amount ||
-            0
+          r.planned_amount || 0
         ),
       0
     );
@@ -2789,24 +2485,19 @@ export default function BudgetApp() {
       (sum, r) =>
         sum +
         Number(
-          r.planned_amount ||
-            0
+          r.planned_amount || 0
         ),
       0
     );
 
   const typeChart = [
     {
-      label:
-        "קבועות",
-      value:
-        fixedActual,
+      label: "קבועות",
+      value: fixedActual,
     },
     {
-      label:
-        "משתנות",
-      value:
-        variableActual,
+      label: "משתנות",
+      value: variableActual,
     },
   ];
 
@@ -2818,14 +2509,12 @@ export default function BudgetApp() {
         (transaction) => {
           const name =
             categoryMap[
-              transaction
-                .category_id
+              transaction.category_id
             ] ||
             "ללא קטגוריה";
 
           map[name] =
-            (map[name] ||
-              0) +
+            (map[name] || 0) +
             Number(
               transaction.actual_amount ||
                 0
@@ -2847,8 +2536,7 @@ export default function BudgetApp() {
         )
         .sort(
           (a, b) =>
-            b.value -
-            a.value
+            b.value - a.value
         )
         .slice(0, 8);
     }, [
@@ -2856,8 +2544,94 @@ export default function BudgetApp() {
       categoryMap,
     ]);
 
+  /* =====================================================
+     CREDIT IMPORT FILTER
+  ===================================================== */
+
+  const filteredImportRows =
+    useMemo(() => {
+      if (
+        importFromDate &&
+        importToDate &&
+        importFromDate >
+          importToDate
+      ) {
+        return [];
+      }
+
+      return importPreview.filter(
+        (row) => {
+          const date =
+            row.transaction_date ||
+            "";
+
+          if (
+            importFromDate &&
+            date < importFromDate
+          ) {
+            return false;
+          }
+
+          if (
+            importToDate &&
+            date > importToDate
+          ) {
+            return false;
+          }
+
+          return true;
+        }
+      );
+    }, [
+      importPreview,
+      importFromDate,
+      importToDate,
+    ]);
+
+  const importDateRangeError =
+    importFromDate &&
+    importToDate &&
+    importFromDate >
+      importToDate
+      ? "התאריך 'מתאריך' חייב להיות לפני או שווה ל'עד תאריך'."
+      : "";
+
+  const filteredImportFileInfo =
+    useMemo(() => {
+      if (!importFileInfo) {
+        return null;
+      }
+
+      return {
+        ...importFileInfo,
+
+        total:
+          filteredImportRows.length,
+
+        duplicates:
+          filteredImportRows.filter(
+            (row) =>
+              row.duplicate
+          ).length,
+
+        amount:
+          filteredImportRows.reduce(
+            (sum, row) =>
+              sum +
+              Number(
+                row.actual_amount ||
+                  0
+              ),
+            0
+          ),
+      };
+    }, [
+      importFileInfo,
+      filteredImportRows,
+    ]);
+
   const selectedImportCount =
-    importPreview.filter(
+    filteredImportRows.filter(
       (row) =>
         importSelected[
           row.id
@@ -2866,7 +2640,7 @@ export default function BudgetApp() {
     ).length;
 
   const selectedImportAmount =
-    importPreview
+    filteredImportRows
       .filter(
         (row) =>
           importSelected[
@@ -2896,9 +2670,7 @@ export default function BudgetApp() {
       >
         <form
           className="login-card"
-          onSubmit={
-            signIn
-          }
+          onSubmit={signIn}
         >
           <div className="logo-circle">
             ₪
@@ -2918,12 +2690,9 @@ export default function BudgetApp() {
             <input
               type="email"
               value={email}
-              onChange={(
-                event
-              ) =>
+              onChange={(event) =>
                 setEmail(
-                  event.target
-                    .value
+                  event.target.value
                 )
               }
             />
@@ -2935,12 +2704,9 @@ export default function BudgetApp() {
             <input
               type="password"
               value={password}
-              onChange={(
-                event
-              ) =>
+              onChange={(event) =>
                 setPassword(
-                  event.target
-                    .value
+                  event.target.value
                 )
               }
             />
@@ -3002,15 +2768,12 @@ export default function BudgetApp() {
           <span className="user-name">
             {memberMap[
               user.id
-            ] ||
-              "משתמשת"}
+            ] || "משתמשת"}
           </span>
 
           <button
             className="ghost"
-            onClick={
-              signOut
-            }
+            onClick={signOut}
           >
             יציאה
           </button>
@@ -3033,9 +2796,7 @@ export default function BudgetApp() {
         </button>
 
         <strong>
-          {monthLabel(
-            month
-          )}
+          {monthLabel(month)}
         </strong>
 
         <button
@@ -3108,8 +2869,7 @@ export default function BudgetApp() {
           DASHBOARD
       =================================================== */}
 
-      {tab ===
-        "dashboard" && (
+      {tab === "dashboard" && (
         <>
           <div className="page-title">
             <div>
@@ -3118,9 +2878,7 @@ export default function BudgetApp() {
               </h2>
 
               <p>
-                {monthLabel(
-                  month
-                )}
+                {monthLabel(month)}
               </p>
             </div>
 
@@ -3178,9 +2936,7 @@ export default function BudgetApp() {
           <div className="two-columns">
             <Panel title="קבועות מול משתנות">
               <Bars
-                data={
-                  typeChart
-                }
+                data={typeChart}
               />
             </Panel>
 
@@ -3204,14 +2960,9 @@ export default function BudgetApp() {
               {pendingRecurring.length ? (
                 <div className="fixed-list">
                   {pendingRecurring
-                    .slice(
-                      0,
-                      6
-                    )
+                    .slice(0, 6)
                     .map(
-                      (
-                        item
-                      ) => (
+                      (item) => (
                         <div
                           className="fixed-item"
                           key={
@@ -3260,14 +3011,9 @@ export default function BudgetApp() {
 
             <Panel title="תנועות אחרונות">
               {transactions
-                .slice(
-                  0,
-                  7
-                )
+                .slice(0, 7)
                 .map(
-                  (
-                    transaction
-                  ) => (
+                  (transaction) => (
                     <div
                       className="recent-row"
                       key={
@@ -3330,8 +3076,7 @@ export default function BudgetApp() {
           EXPENSES
       =================================================== */}
 
-      {tab ===
-        "expenses" && (
+      {tab === "expenses" && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -3355,25 +3100,20 @@ export default function BudgetApp() {
           </div>
 
           <TransactionTable
-            transactions={
-              expenseTx
-            }
+            transactions={expenseTx}
             categoryMap={
               categoryMap
             }
             memberMap={
               memberMap
             }
-            onEdit={
-              openTx
-            }
+            onEdit={openTx}
             onDelete={(
               transaction
             ) =>
               setConfirm({
                 type: "tx",
-                item:
-                  transaction,
+                item: transaction,
               })
             }
           />
@@ -3384,8 +3124,7 @@ export default function BudgetApp() {
           FIXED
       =================================================== */}
 
-      {tab ===
-        "fixed" && (
+      {tab === "fixed" && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -3455,9 +3194,7 @@ export default function BudgetApp() {
                 return (
                   <div
                     className="fixed-card"
-                    key={
-                      item.id
-                    }
+                    key={item.id}
                   >
                     <div className="fixed-main">
                       <strong>
@@ -3562,8 +3299,7 @@ export default function BudgetApp() {
           INCOME
       =================================================== */}
 
-      {tab ===
-        "income" && (
+      {tab === "income" && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -3590,25 +3326,20 @@ export default function BudgetApp() {
           </div>
 
           <TransactionTable
-            transactions={
-              incomeTx
-            }
+            transactions={incomeTx}
             categoryMap={
               categoryMap
             }
             memberMap={
               memberMap
             }
-            onEdit={
-              openTx
-            }
+            onEdit={openTx}
             onDelete={(
               transaction
             ) =>
               setConfirm({
                 type: "tx",
-                item:
-                  transaction,
+                item: transaction,
               })
             }
           />
@@ -3619,8 +3350,7 @@ export default function BudgetApp() {
           CREDIT IMPORT
       =================================================== */}
 
-      {tab ===
-        "import" && (
+      {tab === "import" && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -3698,9 +3428,7 @@ export default function BudgetApp() {
                   value={
                     importProvider
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setImportProvider(
                       event.target
                         .value
@@ -3723,6 +3451,65 @@ export default function BudgetApp() {
             </div>
           </div>
 
+          {/* DATE FILTER */}
+
+          <div className="import-date-filter">
+            <label>
+              מתאריך
+
+              <input
+                type="date"
+                value={
+                  importFromDate
+                }
+                onChange={(event) =>
+                  setImportFromDate(
+                    event.target
+                      .value
+                  )
+                }
+              />
+            </label>
+
+            <label>
+              עד תאריך
+
+              <input
+                type="date"
+                value={
+                  importToDate
+                }
+                onChange={(event) =>
+                  setImportToDate(
+                    event.target
+                      .value
+                  )
+                }
+              />
+            </label>
+
+            <button
+              type="button"
+              className="ghost small"
+              onClick={() => {
+                setImportFromDate(
+                  ""
+                );
+                setImportToDate(
+                  ""
+                );
+              }}
+            >
+              נקה סינון
+            </button>
+          </div>
+
+          {importDateRangeError && (
+            <div className="error">
+              {importDateRangeError}
+            </div>
+          )}
+
           {importError && (
             <div className="error">
               {importError}
@@ -3735,49 +3522,48 @@ export default function BudgetApp() {
             </div>
           )}
 
-          {importFileInfo && (
+          {filteredImportFileInfo && (
             <div className="import-summary">
               <Stat
                 title="חברה"
                 value={providerLabel(
-                  importFileInfo.provider
+                  filteredImportFileInfo.provider
                 )}
               />
 
               <Stat
                 title="כרטיס"
                 value={
-                  importFileInfo
-                    .cardLast4
-                    ? `•••• ${importFileInfo.cardLast4}`
+                  filteredImportFileInfo.cardLast4
+                    ? `•••• ${filteredImportFileInfo.cardLast4}`
                     : "לא זוהה"
                 }
               />
 
               <Stat
-                title="עסקאות בקובץ"
+                title="עסקאות בטווח"
                 value={String(
-                  importFileInfo.total
+                  filteredImportFileInfo.total
                 )}
               />
 
               <Stat
                 title="כבר קיימות"
                 value={String(
-                  importFileInfo.duplicates
+                  filteredImportFileInfo.duplicates
                 )}
               />
 
               <Stat
-                title="סכום בקובץ"
+                title="סכום בטווח"
                 value={money(
-                  importFileInfo.amount
+                  filteredImportFileInfo.amount
                 )}
               />
             </div>
           )}
 
-          {importPreview.length > 0 && (
+          {filteredImportRows.length > 0 && (
             <>
               <div className="import-toolbar">
                 <div>
@@ -3822,7 +3608,8 @@ export default function BudgetApp() {
                     disabled={
                       importSaving ||
                       selectedImportCount ===
-                        0
+                        0 ||
+                      !!importDateRangeError
                     }
                     onClick={
                       importSelectedTransactions
@@ -3851,10 +3638,8 @@ export default function BudgetApp() {
                   </thead>
 
                   <tbody>
-                    {importPreview.map(
-                      (
-                        row
-                      ) => (
+                    {filteredImportRows.map(
+                      (row) => (
                         <tr
                           key={
                             row.id
@@ -3919,9 +3704,7 @@ export default function BudgetApp() {
                                 row.category_id ||
                                 ""
                               }
-                              onChange={(
-                                event
-                              ) =>
+                              onChange={(event) =>
                                 changeImportCategory(
                                   row.id,
                                   event
@@ -3963,9 +3746,7 @@ export default function BudgetApp() {
                               value={
                                 row.expense_type
                               }
-                              onChange={(
-                                event
-                              ) =>
+                              onChange={(event) =>
                                 changeImportType(
                                   row.id,
                                   event
@@ -4023,6 +3804,14 @@ export default function BudgetApp() {
             </>
           )}
 
+          {importPreview.length > 0 &&
+            filteredImportRows.length === 0 &&
+            !importDateRangeError && (
+              <Empty
+                text="אין עסקאות בטווח התאריכים שנבחר."
+              />
+            )}
+
           {!importPreview.length &&
             !importLoading && (
               <Empty
@@ -4036,8 +3825,7 @@ export default function BudgetApp() {
           CATEGORIES
       =================================================== */}
 
-      {tab ===
-        "categories" && (
+      {tab === "categories" && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -4056,9 +3844,7 @@ export default function BudgetApp() {
               value={
                 newCategory
               }
-              onChange={(
-                event
-              ) =>
+              onChange={(event) =>
                 setNewCategory(
                   event.target
                     .value
@@ -4082,9 +3868,7 @@ export default function BudgetApp() {
 
           <div className="category-grid">
             {categories.map(
-              (
-                category
-              ) => (
+              (category) => (
                 <div
                   className="category-card"
                   key={
@@ -4141,14 +3925,13 @@ export default function BudgetApp() {
                   value={
                     recForm.name
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setRecForm({
                       ...recForm,
-                      name: event
-                        .target
-                        .value,
+                      name:
+                        event
+                          .target
+                          .value,
                     })
                   }
                 />
@@ -4161,9 +3944,7 @@ export default function BudgetApp() {
                   value={
                     recForm.category_id
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setRecForm({
                       ...recForm,
                       category_id:
@@ -4209,9 +3990,7 @@ export default function BudgetApp() {
                     value={
                       recForm.planned_amount
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setRecForm({
                         ...recForm,
                         planned_amount:
@@ -4233,9 +4012,7 @@ export default function BudgetApp() {
                     value={
                       recForm.day_of_month
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setRecForm({
                         ...recForm,
                         day_of_month:
@@ -4255,9 +4032,7 @@ export default function BudgetApp() {
                   value={
                     recForm.merchant
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setRecForm({
                       ...recForm,
                       merchant:
@@ -4276,9 +4051,7 @@ export default function BudgetApp() {
                   value={
                     recForm.payment_method
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setRecForm({
                       ...recForm,
                       payment_method:
@@ -4325,9 +4098,7 @@ export default function BudgetApp() {
                   value={
                     recForm.person_user_id
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setRecForm({
                       ...recForm,
                       person_user_id:
@@ -4370,14 +4141,13 @@ export default function BudgetApp() {
                   value={
                     recForm.note
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setRecForm({
                       ...recForm,
-                      note: event
-                        .target
-                        .value,
+                      note:
+                        event
+                          .target
+                          .value,
                     })
                   }
                 />
@@ -4429,9 +4199,7 @@ export default function BudgetApp() {
                   value={
                     txForm.description
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setTxForm({
                       ...txForm,
                       description:
@@ -4452,9 +4220,7 @@ export default function BudgetApp() {
                     value={
                       txForm.expense_type
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setTxForm({
                         ...txForm,
                         expense_type:
@@ -4482,9 +4248,7 @@ export default function BudgetApp() {
                   value={
                     txForm.category_id
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setTxForm({
                       ...txForm,
                       category_id:
@@ -4533,9 +4297,7 @@ export default function BudgetApp() {
                       value={
                         txForm.planned_amount
                       }
-                      onChange={(
-                        event
-                      ) =>
+                      onChange={(event) =>
                         setTxForm({
                           ...txForm,
                           planned_amount:
@@ -4558,9 +4320,7 @@ export default function BudgetApp() {
                   value={
                     txForm.actual_amount
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setTxForm({
                       ...txForm,
                       actual_amount:
@@ -4587,9 +4347,7 @@ export default function BudgetApp() {
                     value={
                       txForm.transaction_date
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setTxForm({
                         ...txForm,
                         transaction_date:
@@ -4608,9 +4366,7 @@ export default function BudgetApp() {
                     value={
                       txForm.person_user_id
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setTxForm({
                         ...txForm,
                         person_user_id:
@@ -4654,9 +4410,7 @@ export default function BudgetApp() {
                     value={
                       txForm.merchant
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setTxForm({
                         ...txForm,
                         merchant:
@@ -4677,9 +4431,7 @@ export default function BudgetApp() {
                     value={
                       txForm.credit_card_last4
                     }
-                    onChange={(
-                      event
-                    ) =>
+                    onChange={(event) =>
                       setTxForm({
                         ...txForm,
                         credit_card_last4:
@@ -4688,9 +4440,7 @@ export default function BudgetApp() {
                               /\D/g,
                               ""
                             )
-                            .slice(
-                              -4
-                            ),
+                            .slice(-4),
                       })
                     }
                   />
@@ -4704,9 +4454,7 @@ export default function BudgetApp() {
                   value={
                     txForm.credit_card_provider
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setTxForm({
                       ...txForm,
                       credit_card_provider:
@@ -4737,9 +4485,7 @@ export default function BudgetApp() {
                   value={
                     txForm.payment_method
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setTxForm({
                       ...txForm,
                       payment_method:
@@ -4787,14 +4533,13 @@ export default function BudgetApp() {
                   value={
                     txForm.note
                   }
-                  onChange={(
-                    event
-                  ) =>
+                  onChange={(event) =>
                     setTxForm({
                       ...txForm,
-                      note: event
-                        .target
-                        .value,
+                      note:
+                        event
+                          .target
+                          .value,
                     })
                   }
                 />
@@ -4841,9 +4586,7 @@ export default function BudgetApp() {
         <Modal
           title="אישור מחיקה"
           onClose={() =>
-            setConfirm(
-              null
-            )
+            setConfirm(null)
           }
         >
           <p>
@@ -4860,9 +4603,7 @@ export default function BudgetApp() {
             <button
               className="ghost"
               onClick={() =>
-                setConfirm(
-                  null
-                )
+                setConfirm(null)
               }
             >
               ביטול
@@ -4907,9 +4648,7 @@ function Stat({
       </span>
 
       <strong
-        className={
-          tone
-        }
+        className={tone}
       >
         {value}
       </strong>
@@ -5028,9 +4767,7 @@ function TransactionTable({
 
         <tbody>
           {transactions.map(
-            (
-              transaction
-            ) => {
+            (transaction) => {
               const income =
                 transaction.kind ===
                 "income";
@@ -5083,8 +4820,7 @@ function TransactionTable({
                   <td>
                     {
                       categoryMap[
-                        transaction
-                          .category_id
+                        transaction.category_id
                       ] ||
                       "ללא קטגוריה"
                     }
@@ -5138,8 +4874,7 @@ function TransactionTable({
                   <td>
                     {
                       memberMap[
-                        transaction
-                          .person_user_id
+                        transaction.person_user_id
                       ] ||
                       "לא צוין"
                     }
@@ -5197,9 +4932,7 @@ function Modal({
   return (
     <div
       className="modal-backdrop"
-      onMouseDown={(
-        event
-      ) => {
+      onMouseDown={(event) => {
         if (
           event.target ===
           event.currentTarget
@@ -5231,4 +4964,4 @@ function Modal({
       </div>
     </div>
   );
-          }
+}
