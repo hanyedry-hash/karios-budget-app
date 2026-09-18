@@ -8,15 +8,43 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
 );
 
-const RECURRING_DRAFT_KEY = "karios-budget-recurring-draft";
+const money = (v) =>
+  new Intl.NumberFormat("he-IL", {
+    style: "currency",
+    currency: "ILS",
+    maximumFractionDigits: 0,
+  }).format(Number(v || 0));
 
-const emptyTransactionForm = () => ({
+const dateText = (v) => {
+  if (!v) return "";
+  return new Date(`${v}T00:00:00`).toLocaleDateString("he-IL");
+};
+
+const monthKey = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+
+const monthLabel = (m) => {
+  const [y, mo] = m.split("-").map(Number);
+
+  return new Date(y, mo - 1, 1).toLocaleDateString("he-IL", {
+    month: "long",
+    year: "numeric",
+  });
+};
+
+const shiftMonth = (m, n) => {
+  const [y, mo] = m.split("-").map(Number);
+  const d = new Date(y, mo - 1 + n, 1);
+
+  return monthKey(d);
+};
+
+const emptyTx = () => ({
   description: "",
   category_id: "",
   expense_type: "variable",
   planned_amount: "",
   actual_amount: "",
-  completed: true,
   person_user_id: "",
   transaction_date: new Date().toISOString().slice(0, 10),
   note: "",
@@ -25,7 +53,7 @@ const emptyTransactionForm = () => ({
   credit_card_last4: "",
 });
 
-const emptyRecurringForm = () => ({
+const emptyRecurring = () => ({
   name: "",
   category_id: "",
   planned_amount: "",
@@ -36,175 +64,53 @@ const emptyRecurringForm = () => ({
   note: "",
 });
 
-function formatMoney(value) {
-  const number = Number(value || 0);
-
-  return new Intl.NumberFormat("he-IL", {
-    style: "currency",
-    currency: "ILS",
-    maximumFractionDigits: 0,
-  }).format(number);
-}
-
-function formatDate(value) {
-  if (!value) return "";
-
-  const date = new Date(`${value}T00:00:00`);
-
-  if (Number.isNaN(date.getTime())) return value;
-
-  return date.toLocaleDateString("he-IL");
-}
-
-function getMonthKey(date = new Date()) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-
-  return `${year}-${month}`;
-}
-
-function getMonthLabel(monthKey) {
-  if (!monthKey) return "";
-
-  const [year, month] = monthKey.split("-");
-
-  const date = new Date(Number(year), Number(month) - 1, 1);
-
-  return date.toLocaleDateString("he-IL", {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function addMonths(monthKey, amount) {
-  const [year, month] = monthKey.split("-").map(Number);
-
-  const date = new Date(year, month - 1 + amount, 1);
-
-  return getMonthKey(date);
-}
-
-function loadRecurringDraft() {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const raw = window.localStorage.getItem(RECURRING_DRAFT_KEY);
-
-    if (!raw) return null;
-
-    return {
-      ...emptyRecurringForm(),
-      ...JSON.parse(raw),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveRecurringDraft(form) {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(
-      RECURRING_DRAFT_KEY,
-      JSON.stringify(form)
-    );
-  } catch {
-    // localStorage is only a convenience; ignore failures.
-  }
-}
-
-function clearRecurringDraft() {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.removeItem(RECURRING_DRAFT_KEY);
-  } catch {
-    // Ignore.
-  }
-}
-
-function getTransactionActualAmount(transaction) {
-  if (!transaction) return 0;
-
-  const actual = Number(transaction.actual_amount);
-
-  return Number.isFinite(actual) ? actual : 0;
-}
-
-function getTransactionPlannedAmount(transaction) {
-  if (!transaction) return 0;
-
-  const planned = Number(transaction.planned_amount);
-
-  return Number.isFinite(planned) ? planned : 0;
-}
-
 export default function BudgetApp() {
-  const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
-
   const [household, setHousehold] = useState(null);
-  const [members, setMembers] = useState([]);
+
   const [profiles, setProfiles] = useState([]);
   const [categories, setCategories] = useState([]);
   const [transactions, setTransactions] = useState([]);
-  const [recurringExpenses, setRecurringExpenses] = useState([]);
+  const [recurring, setRecurring] = useState([]);
 
-  const [month, setMonth] = useState(getMonthKey());
+  const [month, setMonth] = useState(monthKey());
+  const [tab, setTab] = useState("dashboard");
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  const [error, setError] = useState("");
+
   const [modal, setModal] = useState(null);
-  const [editingTransaction, setEditingTransaction] = useState(null);
+
+  const [editingTx, setEditingTx] = useState(null);
   const [editingRecurring, setEditingRecurring] = useState(null);
 
-  const [transactionForm, setTransactionForm] = useState(
-    emptyTransactionForm()
-  );
-
-  const [recurringForm, setRecurringForm] = useState(
-    emptyRecurringForm()
-  );
-
-  const [saveError, setSaveError] = useState("");
-  const [loginError, setLoginError] = useState("");
+  const [txForm, setTxForm] = useState(emptyTx());
+  const [recForm, setRecForm] = useState(emptyRecurring());
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
 
-  const [newCategoryName, setNewCategoryName] = useState("");
-  const [showCategoryCreator, setShowCategoryCreator] = useState(false);
+  const [newCategory, setNewCategory] = useState("");
 
-  const [activeTab, setActiveTab] = useState("dashboard");
-
-  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirm, setConfirm] = useState(null);
 
   useEffect(() => {
     let mounted = true;
 
-    async function init() {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession();
-
+    supabase.auth.getSession().then(({ data }) => {
       if (!mounted) return;
 
-      setSession(session);
-      setUser(session?.user || null);
+      setUser(data.session?.user || null);
       setLoading(false);
-    }
-
-    init();
+    });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      setSession(nextSession);
-      setUser(nextSession?.user || null);
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user || null);
     });
 
     return () => {
@@ -214,60 +120,43 @@ export default function BudgetApp() {
   }, []);
 
   useEffect(() => {
-    if (!user) {
+    if (user) {
+      refresh();
+    } else {
       setHousehold(null);
-      setMembers([]);
       setProfiles([]);
       setCategories([]);
       setTransactions([]);
-      setRecurringExpenses([]);
-      return;
+      setRecurring([]);
     }
-
-    refresh();
   }, [user, month]);
 
   async function refresh() {
     if (!user) return;
 
     setLoading(true);
+    setError("");
 
     try {
-      const householdResult = await supabase.rpc(
-        "get_my_household"
-      );
+      const h = await supabase.rpc("get_my_household");
 
-      if (householdResult.error) {
-        console.error(
-          "get_my_household error:",
-          householdResult.error
-        );
-
-        throw householdResult.error;
+      if (h.error) {
+        throw h.error;
       }
 
-      const householdRow =
-        householdResult.data?.[0] || null;
+      const hr = h.data?.[0];
 
-      setHousehold(
-        householdRow
-          ? {
-              id: householdRow.household_id,
-              name: householdRow.household_name,
-            }
-          : null
-      );
-
-      if (!householdRow) {
-        setMembers([]);
-        setProfiles([]);
-        setCategories([]);
-        setTransactions([]);
-        setRecurringExpenses([]);
+      if (!hr) {
+        setHousehold(null);
         return;
       }
 
-      const householdId = householdRow.household_id;
+      const householdId = hr.household_id;
+
+      setHousehold({
+        id: householdId,
+        name: hr.household_name,
+      });
 
       const [
         membersResult,
@@ -290,7 +179,7 @@ export default function BudgetApp() {
           .gte("transaction_date", `${month}-01`)
           .lt(
             "transaction_date",
-            `${addMonths(month, 1)}-01`
+            `${shiftMonth(month, 1)}-01`
           )
           .order("transaction_date", {
             ascending: false,
@@ -310,38 +199,36 @@ export default function BudgetApp() {
 
       if (membersResult.error) {
         console.error(
-          "members error:",
+          "Members error:",
           membersResult.error
         );
       }
 
       if (categoriesResult.error) {
         console.error(
-          "categories error:",
+          "Categories error:",
           categoriesResult.error
         );
       }
 
       if (transactionsResult.error) {
         console.error(
-          "transactions error:",
+          "Transactions error:",
           transactionsResult.error
         );
       }
 
       if (recurringResult.error) {
         console.error(
-          "recurring expenses error:",
+          "Recurring error:",
           recurringResult.error
         );
       }
 
-      const memberRows = membersResult.data || [];
-
-      setMembers(memberRows);
+      const members = membersResult.data || [];
 
       setProfiles(
-        memberRows.map((member) => ({
+        members.map((member) => ({
           id: member.user_id,
           display_name:
             member.display_name || "ללא שם",
@@ -349,11 +236,24 @@ export default function BudgetApp() {
         }))
       );
 
-      setCategories(categoriesResult.data || []);
-      setTransactions(transactionsResult.data || []);
-      setRecurringExpenses(recurringResult.data || []);
-    } catch (error) {
-      console.error("Refresh error:", error);
+      setCategories(
+        categoriesResult.data || []
+      );
+
+      setTransactions(
+        transactionsResult.data || []
+      );
+
+      setRecurring(
+        recurringResult.data || []
+      );
+    } catch (e) {
+      console.error(e);
+
+      setError(
+        e.message ||
+          "שגיאה בטעינת הנתונים"
+      );
     } finally {
       setLoading(false);
     }
@@ -364,19 +264,13 @@ export default function BudgetApp() {
 
     setLoginError("");
 
-    if (!email.trim() || !password) {
-      setLoginError("יש להזין אימייל וסיסמה.");
-      return;
-    }
-
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    const { error } =
+      await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      });
 
     if (error) {
-      console.error("Login error:", error);
-
       setLoginError(
         "ההתחברות נכשלה. בדקי את האימייל והסיסמה."
       );
@@ -387,191 +281,211 @@ export default function BudgetApp() {
     await supabase.auth.signOut();
   }
 
-  function openTransactionModal(
+  function openTx(
     transaction = null,
     kind = "expense"
   ) {
-    setSaveError("");
+    setError("");
+    setEditingTx(transaction);
 
     if (transaction) {
-      setEditingTransaction(transaction);
+      setTxForm({
+        description:
+          transaction.description || "",
 
-      setTransactionForm({
-        description: transaction.description || "",
         category_id:
           transaction.category_id || "",
+
         expense_type:
-          transaction.expense_type || "variable",
+          transaction.expense_type ||
+          "variable",
+
         planned_amount:
           transaction.planned_amount ?? "",
+
         actual_amount:
           transaction.actual_amount ?? "",
-        completed:
-          transaction.completed ?? true,
+
         person_user_id:
-          transaction.person_user_id || "",
+          transaction.person_user_id ||
+          "",
+
         transaction_date:
           transaction.transaction_date ||
-          new Date().toISOString().slice(0, 10),
-        note: transaction.note || "",
+          new Date()
+            .toISOString()
+            .slice(0, 10),
+
+        note:
+          transaction.note || "",
+
         payment_method:
-          transaction.payment_method || "",
-        merchant: transaction.merchant || "",
+          transaction.payment_method ||
+          "",
+
+        merchant:
+          transaction.merchant || "",
+
         credit_card_last4:
-          transaction.credit_card_last4 || "",
+          transaction.credit_card_last4 ||
+          "",
+
+        kind,
       });
     } else {
-      setEditingTransaction(null);
-
-      const form = emptyTransactionForm();
-
-      if (kind === "income") {
-        form.expense_type = "";
-      }
-
-      setTransactionForm(form);
+      setTxForm({
+        ...emptyTx(),
+        kind,
+      });
     }
 
-    setModal(kind === "income" ? "income" : "transaction");
+    setModal(
+      kind === "income"
+        ? "income"
+        : "transaction"
+    );
   }
 
-  function closeTransactionModal() {
-    if (saving) return;
-
+  function closeModal() {
     setModal(null);
-    setEditingTransaction(null);
-    setSaveError("");
-    setTransactionForm(emptyTransactionForm());
+    setEditingTx(null);
+    setEditingRecurring(null);
+    setError("");
   }
 
-  function updateTransactionField(field, value) {
-    setTransactionForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
-  }
-
-  async function saveTransaction(event) {
+  async function saveTx(event) {
     event.preventDefault();
 
-    if (saving) return;
-
-    setSaveError("");
-
-    if (!household?.id) {
-      setSaveError("לא נמצא התקציב המשפחתי.");
+    if (saving || !household) {
       return;
     }
 
-    const form = transactionForm;
+    setError("");
+
+    const form = txForm;
+
+    const kind =
+      modal === "income"
+        ? "income"
+        : "expense";
 
     const description = String(
       form.description || ""
     ).trim();
 
-    const amount =
-      form.expense_type === "variable" &&
-      form.actual_amount !== ""
-        ? Number(form.actual_amount)
-        : Number(
-            form.actual_amount !== ""
-              ? form.actual_amount
-              : form.planned_amount
-          );
+    const actual =
+      form.actual_amount === ""
+        ? null
+        : Number(form.actual_amount);
+
+    const planned =
+      kind === "expense" &&
+      form.expense_type === "fixed"
+        ? Number(form.planned_amount)
+        : actual;
 
     if (!description) {
-      setSaveError("יש להזין תיאור.");
+      setError("יש להזין תיאור.");
       return;
     }
 
     if (!form.transaction_date) {
-      setSaveError("יש לבחור תאריך.");
+      setError("יש לבחור תאריך.");
       return;
     }
-
-    if (!Number.isFinite(amount) || amount < 0) {
-      setSaveError("יש להזין סכום תקין.");
-      return;
-    }
-
-    let kind = "expense";
-
-    if (modal === "income") {
-      kind = "income";
-    }
-
-    const isFixed =
-      kind === "expense" &&
-      form.expense_type === "fixed";
-
-    const plannedAmount = isFixed
-      ? Number(form.planned_amount || 0)
-      : amount;
-
-    const actualAmount =
-      kind === "income"
-        ? amount
-        : form.actual_amount === ""
-        ? null
-        : Number(form.actual_amount);
 
     if (
-      isFixed &&
-      (form.planned_amount === "" ||
-        !Number.isFinite(plannedAmount) ||
-        plannedAmount < 0)
+      kind === "expense" &&
+      form.expense_type === "fixed" &&
+      (
+        !Number.isFinite(planned) ||
+        planned < 0
+      )
     ) {
-      setSaveError(
+      setError(
         "יש להזין סכום מתוכנן תקין."
       );
       return;
     }
 
     if (
-      actualAmount !== null &&
-      (!Number.isFinite(actualAmount) ||
-        actualAmount < 0)
+      actual !== null &&
+      (
+        !Number.isFinite(actual) ||
+        actual < 0
+      )
     ) {
-      setSaveError("יש להזין סכום בפועל תקין.");
+      setError(
+        "יש להזין סכום בפועל תקין."
+      );
       return;
     }
 
-const row = {
-  household_id: household.id,
-  created_by: user?.id || null,
+    if (
+      kind === "income" &&
+      (
+        !Number.isFinite(actual) ||
+        actual < 0
+      )
+    ) {
+      setError("יש להזין סכום תקין.");
+      return;
+    }
+
+    const row = {
+      household_id: household.id,
+
+      created_by:
+        user?.id || null,
+
       kind,
+
       description,
+
       category_id:
         form.category_id || null,
+
       transaction_date:
         form.transaction_date,
-      planned_amount: plannedAmount,
+
+      planned_amount:
+        kind === "expense" &&
+        form.expense_type === "fixed"
+          ? planned
+          : actual,
+
       completed:
         kind === "income"
           ? true
-          : actualAmount !== null,
-      actual_amount:
-        kind === "income"
-          ? amount
-          : actualAmount,
+          : actual !== null,
+
+      actual_amount: actual,
+
       expense_type:
         kind === "expense"
           ? form.expense_type
           : null,
+
       person_user_id:
         form.person_user_id || null,
+
       note:
         String(form.note || "").trim() ||
         null,
+
       payment_method:
         form.payment_method || null,
+
       merchant:
         String(form.merchant || "").trim() ||
         null,
+
       credit_card_last4:
         String(
           form.credit_card_last4 || ""
-        ).replace(/\D/g, "").slice(-4) || null,
+        )
+          .replace(/\D/g, "")
+          .slice(-4) || null,
     };
 
     setSaving(true);
@@ -579,11 +493,14 @@ const row = {
     try {
       let result;
 
-      if (editingTransaction) {
+      if (editingTx) {
         result = await supabase
           .from("transactions")
           .update(row)
-          .eq("id", editingTransaction.id)
+          .eq(
+            "id",
+            editingTx.id
+          )
           .eq(
             "household_id",
             household.id
@@ -599,160 +516,84 @@ const row = {
       }
 
       if (result.error) {
-        console.error(
-          "Transaction save error:",
-          result.error
-        );
-
-        setSaveError(
-          "לא הצלחתי לשמור את התנועה.\n\n" +
-            result.error.message
-        );
-
-        return;
+        throw result.error;
       }
 
-      if (!result.data) {
-        setSaveError(
-          "Supabase לא החזיר את הרשומה שנשמרה. נסי שוב."
-        );
-
-        return;
-      }
-
-      setModal(null);
-      setEditingTransaction(null);
-      setTransactionForm(
-        emptyTransactionForm()
-      );
-      setSaveError("");
+      closeModal();
 
       await refresh();
-    } catch (error) {
-      console.error(
-        "Unexpected transaction save error:",
-        error
-      );
+    } catch (e) {
+      console.error(e);
 
-      setSaveError(
-        "אירעה שגיאה לא צפויה בשמירה.\n\n" +
-          (error?.message || String(error))
+      setError(
+        e.message ||
+          "לא הצלחתי לשמור את התנועה."
       );
     } finally {
       setSaving(false);
     }
   }
 
-  function openRecurringModal(
-    recurringExpense = null
+  function openRecurring(
+    item = null
   ) {
-    setSaveError("");
+    setError("");
+    setEditingRecurring(item);
 
-    if (recurringExpense) {
-      setEditingRecurring(
-        recurringExpense
-      );
+    setRecForm(
+      item
+        ? {
+            name:
+              item.name || "",
 
-      setRecurringForm({
-        name:
-          recurringExpense.name || "",
-        category_id:
-          recurringExpense.category_id ||
-          "",
-        planned_amount:
-          recurringExpense.planned_amount ??
-          "",
-        day_of_month:
-          recurringExpense.day_of_month ??
-          "1",
-        payment_method:
-          recurringExpense.payment_method ||
-          "",
-        merchant:
-          recurringExpense.merchant || "",
-        person_user_id:
-          recurringExpense.person_user_id ||
-          "",
-        note:
-          recurringExpense.note || "",
-      });
-    } else {
-      setEditingRecurring(null);
+            category_id:
+              item.category_id || "",
 
-      const draft =
-        loadRecurringDraft();
+            planned_amount:
+              item.planned_amount ?? "",
 
-      setRecurringForm(
-        draft || emptyRecurringForm()
-      );
-    }
+            day_of_month:
+              item.day_of_month ?? "1",
+
+            payment_method:
+              item.payment_method || "",
+
+            merchant:
+              item.merchant || "",
+
+            person_user_id:
+              item.person_user_id || "",
+
+            note:
+              item.note || "",
+          }
+        : emptyRecurring()
+    );
 
     setModal("recurring");
-  }
-
-  function closeRecurringModal() {
-    if (saving) return;
-
-    setModal(null);
-    setEditingRecurring(null);
-    setSaveError("");
-
-    /*
-     * Intentionally keep the draft when the user
-     * closes the modal without saving.
-     */
-  }
-
-  function updateRecurringField(
-    field,
-    value
-  ) {
-    setRecurringForm((current) => {
-      const next = {
-        ...current,
-        [field]: value,
-      };
-
-      if (!editingRecurring) {
-        saveRecurringDraft(next);
-      }
-
-      return next;
-    });
   }
 
   async function saveRecurring(event) {
     event.preventDefault();
 
-    if (saving) return;
-
-    setSaveError("");
-
-    if (!household?.id) {
-      setSaveError(
-        "לא נמצא התקציב המשפחתי."
-      );
+    if (saving || !household) {
       return;
     }
 
-    const form = recurringForm;
+    setError("");
 
-    const name = String(
-      form.name || ""
-    ).trim();
+    const form = recForm;
 
     const planned =
-      form.planned_amount === ""
-        ? NaN
-        : Number(form.planned_amount);
+      Number(form.planned_amount);
 
     const day =
-      form.day_of_month === ""
-        ? NaN
-        : Number(form.day_of_month);
+      Number(form.day_of_month);
 
-    if (!name) {
-      setSaveError(
+    if (
+      !String(form.name || "").trim()
+    ) {
+      setError(
         "יש להזין שם הוצאה."
       );
       return;
@@ -762,7 +603,7 @@ const row = {
       !Number.isFinite(planned) ||
       planned < 0
     ) {
-      setSaveError(
+      setError(
         "יש להזין סכום מתוכנן תקין."
       );
       return;
@@ -773,36 +614,45 @@ const row = {
       day < 1 ||
       day > 31
     ) {
-      setSaveError(
-        "יום בחודש חייב להיות מספר שלם בין 1 ל־31."
+      setError(
+        "יום בחודש חייב להיות בין 1 ל־31."
       );
       return;
     }
 
     const row = {
-      household_id: household.id,
-      name,
+      household_id:
+        household.id,
+
+      name:
+        String(form.name).trim(),
+
       category_id:
         form.category_id || null,
-      planned_amount: planned,
-      day_of_month: day,
+
+      planned_amount:
+        planned,
+
+      day_of_month:
+        day,
+
       person_user_id:
         form.person_user_id || null,
-      is_active: true,
+
+      is_active:
+        true,
+
       note:
         String(form.note || "").trim() ||
         null,
+
       payment_method:
         form.payment_method || null,
+
       merchant:
         String(form.merchant || "").trim() ||
         null,
     };
-
-    console.log(
-      "Saving recurring expense:",
-      row
-    );
 
     setSaving(true);
 
@@ -831,332 +681,238 @@ const row = {
           .single();
       }
 
-      console.log(
-        "Recurring save result:",
-        result
-      );
-
       if (result.error) {
-        console.error(
-          "Recurring save error:",
-          result.error
-        );
-
-        setSaveError(
-          "לא הצלחתי לשמור את ההוצאה הקבועה.\n\n" +
-            result.error.message
-        );
-
-        return;
+        throw result.error;
       }
 
-      if (!result.data) {
-        setSaveError(
-          "Supabase לא החזיר את ההוצאה הקבועה שנשמרה. נסי שוב."
-        );
-
-        return;
-      }
-
-      /*
-       * IMPORTANT:
-       * We update the local list immediately from the
-       * returned database row, so the new expense appears
-       * even before refresh finishes.
-       */
-      if (editingRecurring) {
-        setRecurringExpenses(
-          (current) =>
-            current.map((item) =>
-              item.id ===
-              editingRecurring.id
-                ? result.data
-                : item
-            )
-        );
-      } else {
-        setRecurringExpenses(
-          (current) =>
-            [
-              ...current,
-              result.data,
-            ].sort(
-              (a, b) =>
-                Number(a.day_of_month || 0) -
-                Number(b.day_of_month || 0)
-            )
-        );
-      }
-
-      clearRecurringDraft();
-
-      setSaving(false);
-      setEditingRecurring(null);
-      setModal(null);
-      setSaveError("");
-      setRecurringForm(
-        emptyRecurringForm()
-      );
+      closeModal();
 
       await refresh();
-    } catch (error) {
-      console.error(
-        "Unexpected recurring save error:",
-        error
-      );
+    } catch (e) {
+      console.error(e);
 
-      setSaveError(
-        "אירעה שגיאה לא צפויה בשמירת ההוצאה הקבועה.\n\n" +
-          (error?.message ||
-            String(error))
+      setError(
+        e.message ||
+          "לא הצלחתי לשמור את ההוצאה הקבועה."
       );
     } finally {
       setSaving(false);
     }
   }
 
-  async function deleteTransaction(
-    transaction
-  ) {
-    if (!transaction?.id) return;
+  async function chargeRecurring(item) {
+    if (saving || !household) {
+      return;
+    }
 
-    setSaving(true);
-
-    try {
-      const { error } = await supabase
-        .from("transactions")
-        .delete()
-        .eq("id", transaction.id)
-        .eq(
-          "household_id",
-          household.id
-        );
-
-      if (error) {
-        console.error(
-          "Delete transaction error:",
-          error
-        );
-
-        alert(
-          "לא הצלחתי למחוק את התנועה.\n\n" +
-            error.message
-        );
-
-        return;
-      }
-
-      setTransactions((current) =>
-        current.filter(
-          (item) =>
-            item.id !== transaction.id
+    const actualText =
+      window.prompt(
+        `סכום בפועל עבור ${item.name}\nמתוכנן: ${money(
+          item.planned_amount
+        )}`,
+        String(
+          item.planned_amount ?? ""
         )
       );
 
-      setConfirmDelete(null);
+    if (actualText === null) {
+      return;
+    }
+
+    const actual =
+      Number(actualText);
+
+    if (
+      !Number.isFinite(actual) ||
+      actual < 0
+    ) {
+      window.alert(
+        "יש להזין סכום תקין."
+      );
+      return;
+    }
+
+    setSaving(true);
+    setError("");
+
+    try {
+      const {
+        data: existing,
+        error: findError,
+      } = await supabase
+        .from("transactions")
+        .select("*")
+        .eq(
+          "recurring_expense_id",
+          item.id
+        )
+        .eq(
+          "recurring_month",
+          month
+        )
+        .maybeSingle();
+
+      if (findError) {
+        throw findError;
+      }
+
+      const day = Math.min(
+        Number(item.day_of_month) || 1,
+        28
+      );
+
+      const row = {
+        household_id:
+          household.id,
+
+        created_by:
+          user?.id || null,
+
+        kind:
+          "expense",
+
+        description:
+          item.name,
+
+        category_id:
+          item.category_id || null,
+
+        transaction_date:
+          `${month}-${String(day).padStart(
+            2,
+            "0"
+          )}`,
+
+        planned_amount:
+          Number(
+            item.planned_amount || 0
+          ),
+
+        completed:
+          true,
+
+        actual_amount:
+          actual,
+
+        expense_type:
+          "fixed",
+
+        person_user_id:
+          item.person_user_id || null,
+
+        note:
+          item.note || null,
+
+        payment_method:
+          item.payment_method || null,
+
+        merchant:
+          item.merchant || null,
+
+        recurring_expense_id:
+          item.id,
+
+        recurring_month:
+          month,
+      };
+
+      let result;
+
+      if (existing) {
+        result = await supabase
+          .from("transactions")
+          .update(row)
+          .eq(
+            "id",
+            existing.id
+          )
+          .select("*")
+          .single();
+      } else {
+        result = await supabase
+          .from("transactions")
+          .insert(row)
+          .select("*")
+          .single();
+      }
+
+      if (result.error) {
+        throw result.error;
+      }
 
       await refresh();
+    } catch (e) {
+      console.error(e);
+
+      setError(
+        e.message ||
+          "לא הצלחתי לסמן כחויב."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteTx(tx) {
+    setConfirm(null);
+    setSaving(true);
+
+    try {
+      const { error } =
+        await supabase
+          .from("transactions")
+          .delete()
+          .eq("id", tx.id)
+          .eq(
+            "household_id",
+            household.id
+          );
+
+      if (error) {
+        throw error;
+      }
+
+      await refresh();
+    } catch (e) {
+      setError(
+        e.message ||
+          "המחיקה נכשלה."
+      );
     } finally {
       setSaving(false);
     }
   }
 
   async function deleteRecurring(
-    recurringExpense
+    item
   ) {
-    if (!recurringExpense?.id) return;
-
+    setConfirm(null);
     setSaving(true);
 
     try {
-      const { error } = await supabase
-        .from("recurring_expenses")
-        .delete()
-        .eq(
-          "id",
-          recurringExpense.id
-        )
-        .eq(
-          "household_id",
-          household.id
-        );
-
-      if (error) {
-        console.error(
-          "Delete recurring error:",
-          error
-        );
-
-        alert(
-          "לא הצלחתי למחוק את ההוצאה הקבועה.\n\n" +
-            error.message
-        );
-
-        return;
-      }
-
-      setRecurringExpenses(
-        (current) =>
-          current.filter(
-            (item) =>
-              item.id !==
-              recurringExpense.id
-          )
-      );
-
-      setConfirmDelete(null);
-
-      await refresh();
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function markRecurringCharged(
-    recurringExpense
-  ) {
-    if (!recurringExpense?.id) return;
-
-    setSaveError("");
-
-    const actual = window.prompt(
-      `מה הסכום שחויב בפועל עבור "${recurringExpense.name}"?`,
-      String(
-        recurringExpense.planned_amount ??
-          ""
-      )
-    );
-
-    if (actual === null) return;
-
-    const amount = Number(actual);
-
-    if (
-      !Number.isFinite(amount) ||
-      amount < 0
-    ) {
-      alert("יש להזין סכום תקין.");
-      return;
-    }
-
-    const yearMonth = month;
-
-    /*
-     * One actual transaction per recurring expense
-     * per month.
-     */
-    const { data: existing } =
-      await supabase
-        .from("transactions")
-        .select("id")
-        .eq(
-          "household_id",
-          household.id
-        )
-        .eq(
-          "recurring_expense_id",
-          recurringExpense.id
-        )
-        .eq(
-          "recurring_month",
-          yearMonth
-        )
-        .maybeSingle();
-
-    if (existing) {
-      alert(
-        "ההוצאה הזו כבר סומנה כחויבה בחודש הזה."
-      );
-      return;
-    }
-
-    setSaving(true);
-
-    try {
-      const day = Math.min(
-        Number(
-          recurringExpense.day_of_month ||
-            1
-        ),
-        new Date(
-          Number(yearMonth.slice(0, 4)),
-          Number(yearMonth.slice(5, 7)),
-          0
-        ).getDate()
-      );
-
-      const transactionDate =
-        `${yearMonth}-${String(day).padStart(
-          2,
-          "0"
-        )}`;
-
-      const row = {
-        household_id: household.id,
-        kind: "expense",
-        description:
-          recurringExpense.name,
-        category_id:
-          recurringExpense.category_id ||
-          null,
-        transaction_date:
-          transactionDate,
-        planned_amount:
-          Number(
-            recurringExpense.planned_amount ||
-              0
-          ),
-        completed: true,
-        actual_amount: amount,
-        expense_type: "fixed",
-        person_user_id:
-          recurringExpense.person_user_id ||
-          null,
-        note:
-          recurringExpense.note || null,
-        created_by:
-          user?.id || null,
-        recurring_expense_id:
-          recurringExpense.id,
-        recurring_month:
-          yearMonth,
-        payment_method:
-          recurringExpense.payment_method ||
-          null,
-        merchant:
-          recurringExpense.merchant ||
-          null,
-      };
-
-      const { data, error } =
+      const { error } =
         await supabase
-          .from("transactions")
-          .insert(row)
-          .select("*")
-          .single();
+          .from("recurring_expenses")
+          .delete()
+          .eq(
+            "id",
+            item.id
+          )
+          .eq(
+            "household_id",
+            household.id
+          );
 
       if (error) {
-        console.error(
-          "Charge recurring error:",
-          error
-        );
-
-        alert(
-          "לא הצלחתי לרשום את החיוב בפועל.\n\n" +
-            error.message
-        );
-
-        return;
-      }
-
-      if (data) {
-        setTransactions((current) => [
-          data,
-          ...current,
-        ]);
+        throw error;
       }
 
       await refresh();
+    } catch (e) {
+      setError(
+        e.message ||
+          "המחיקה נכשלה."
+      );
     } finally {
       setSaving(false);
     }
@@ -1164,358 +920,328 @@ const row = {
 
   async function addCategory() {
     const name =
-      newCategoryName.trim();
+      String(
+        newCategory || ""
+      ).trim();
 
-    if (!name) return;
-
-    if (!household?.id) return;
-
-    const { data, error } =
-      await supabase
-        .from("categories")
-        .insert({
-          household_id: household.id,
-          name,
-        })
-        .select("*")
-        .single();
-
-    if (error) {
-      console.error(
-        "Category error:",
-        error
-      );
-
-      alert(
-        "לא הצלחתי להוסיף קטגוריה.\n\n" +
-          error.message
-      );
-
+    if (!name || !household) {
       return;
     }
 
-    if (data) {
-      setCategories((current) =>
-        [...current, data].sort(
-          (a, b) =>
-            String(a.name).localeCompare(
-              String(b.name),
-              "he"
-            )
-        )
-      );
-    }
+    setSaving(true);
 
-    setNewCategoryName("");
-    setShowCategoryCreator(false);
+    try {
+      const { error } =
+        await supabase
+          .from("categories")
+          .insert({
+            household_id:
+              household.id,
+            name,
+          });
+
+      if (error) {
+        throw error;
+      }
+
+      setNewCategory("");
+
+      await refresh();
+    } catch (e) {
+      setError(
+        e.message ||
+          "לא הצלחתי להוסיף קטגוריה."
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  const categoryMap = useMemo(() => {
-    const map = {};
+  const categoryMap = useMemo(
+    () =>
+      Object.fromEntries(
+        categories.map((c) => [
+          c.id,
+          c.name,
+        ])
+      ),
+    [categories]
+  );
 
-    for (const category of categories) {
-      map[category.id] = category.name;
-    }
+  const memberMap = useMemo(
+    () =>
+      Object.fromEntries(
+        profiles.map((p) => [
+          p.id,
+          p.display_name,
+        ])
+      ),
+    [profiles]
+  );
 
-    return map;
-  }, [categories]);
-
-  const memberMap = useMemo(() => {
-    const map = {};
-
-    for (const member of profiles) {
-      map[member.id] =
-        member.display_name ||
-        "ללא שם";
-    }
-
-    return map;
-  }, [profiles]);
-
-  const monthTransactions = useMemo(
-    () => transactions,
+  const expenseTx = useMemo(
+    () =>
+      transactions.filter(
+        (t) =>
+          t.kind === "expense" &&
+          t.actual_amount !== null
+      ),
     [transactions]
   );
 
-  const incomeTransactions =
-    useMemo(
-      () =>
-        monthTransactions.filter(
-          (transaction) =>
-            transaction.kind ===
-            "income"
+  const incomeTx = useMemo(
+    () =>
+      transactions.filter(
+        (t) =>
+          t.kind === "income"
+      ),
+    [transactions]
+  );
+
+  const actualIncome =
+    incomeTx.reduce(
+      (sum, t) =>
+        sum +
+        Number(
+          t.actual_amount || 0
         ),
-      [monthTransactions]
+      0
     );
 
-  const expenseTransactions =
-    useMemo(
-      () =>
-        monthTransactions.filter(
-          (transaction) =>
-            transaction.kind ===
-            "expense"
+  const actualExpenses =
+    expenseTx.reduce(
+      (sum, t) =>
+        sum +
+        Number(
+          t.actual_amount || 0
         ),
-      [monthTransactions]
+      0
     );
 
-  const actualIncome = useMemo(
-    () =>
-      incomeTransactions.reduce(
-        (sum, transaction) =>
-          sum +
-          getTransactionActualAmount(
-            transaction
-          ),
-        0
-      ),
-    [incomeTransactions]
-  );
-
-  const actualExpenses = useMemo(
-    () =>
-      expenseTransactions.reduce(
-        (sum, transaction) =>
-          sum +
-          getTransactionActualAmount(
-            transaction
-          ),
-        0
-      ),
-    [expenseTransactions]
-  );
-
-  const fixedActual = useMemo(
-    () =>
-      expenseTransactions
-        .filter(
-          (transaction) =>
-            transaction.expense_type ===
-            "fixed"
-        )
-        .reduce(
-          (sum, transaction) =>
-            sum +
-            getTransactionActualAmount(
-              transaction
-            ),
-          0
-        ),
-    [expenseTransactions]
-  );
-
-  const variableActual = useMemo(
-    () =>
-      expenseTransactions
-        .filter(
-          (transaction) =>
-            transaction.expense_type ===
-            "variable"
-        )
-        .reduce(
-          (sum, transaction) =>
-            sum +
-            getTransactionActualAmount(
-              transaction
-            ),
-          0
-        ),
-    [expenseTransactions]
-  );
-
-  const plannedFixed = useMemo(
-    () =>
-      recurringExpenses.reduce(
-        (sum, expense) =>
+  const fixedActual =
+    expenseTx
+      .filter(
+        (t) =>
+          t.expense_type ===
+          "fixed"
+      )
+      .reduce(
+        (sum, t) =>
           sum +
           Number(
-            expense.planned_amount || 0
+            t.actual_amount || 0
           ),
         0
-      ),
-    [recurringExpenses]
-  );
+      );
+
+  const variableActual =
+    expenseTx
+      .filter(
+        (t) =>
+          t.expense_type ===
+          "variable"
+      )
+      .reduce(
+        (sum, t) =>
+          sum +
+          Number(
+            t.actual_amount || 0
+          ),
+        0
+      );
 
   const chargedRecurringIds =
+    new Set(
+      expenseTx
+        .filter(
+          (t) =>
+            t.recurring_expense_id &&
+            t.recurring_month ===
+              month
+        )
+        .map(
+          (t) =>
+            t.recurring_expense_id
+        )
+    );
+
+  const pendingRecurring =
+    recurring.filter(
+      (r) =>
+        !chargedRecurringIds.has(
+          r.id
+        )
+    );
+
+  const plannedFixed =
+    recurring.reduce(
+      (sum, r) =>
+        sum +
+        Number(
+          r.planned_amount || 0
+        ),
+      0
+    );
+
+  const pendingPlanned =
+    pendingRecurring.reduce(
+      (sum, r) =>
+        sum +
+        Number(
+          r.planned_amount || 0
+        ),
+      0
+    );
+
+  const typeChart = [
+    {
+      label: "קבועות",
+      value: fixedActual,
+    },
+    {
+      label: "משתנות",
+      value: variableActual,
+    },
+  ];
+
+  const categoryChart =
     useMemo(() => {
-      const set = new Set();
+      const map = {};
 
-      for (const transaction of transactions) {
-        if (
-          transaction.recurring_expense_id &&
-          transaction.recurring_month ===
-            month
-        ) {
-          set.add(
-            transaction.recurring_expense_id
-          );
+      expenseTx.forEach(
+        (transaction) => {
+          const name =
+            categoryMap[
+              transaction.category_id
+            ] ||
+            "ללא קטגוריה";
+
+          map[name] =
+            (map[name] || 0) +
+            Number(
+              transaction.actual_amount ||
+                0
+            );
         }
-      }
+      );
 
-      return set;
-    }, [transactions, month]);
+      return Object.entries(map)
+        .map(
+          ([label, value]) => ({
+            label,
+            value,
+          })
+        )
+        .sort(
+          (a, b) =>
+            b.value - a.value
+        )
+        .slice(0, 8);
+    }, [expenseTx, categoryMap]);
 
-  const pendingFixed = useMemo(
-    () =>
-      recurringExpenses.filter(
-        (expense) =>
-          !chargedRecurringIds.has(
-            expense.id
-          )
-      ),
-    [
-      recurringExpenses,
-      chargedRecurringIds,
-    ]
-  );
-
-  const balance =
-    actualIncome - actualExpenses;
-
-  const previousMonth = addMonths(
-    month,
-    -1
-  );
-
-  const nextMonth = addMonths(
-    month,
-    1
-  );
-
-  function changeMonth(amount) {
-    setMonth((current) =>
-      addMonths(current, amount)
-    );
-  }
-
-  function renderCategoryName(
-    categoryId
-  ) {
+  if (!user) {
     return (
-      categoryMap[categoryId] ||
-      "ללא קטגוריה"
-    );
-  }
-
-  function renderMemberName(
-    memberId
-  ) {
-    return (
-      memberMap[memberId] ||
-      "לא צוין"
-    );
-  }
-
-  if (loading && !user) {
-    return (
-      <div
+      <main
+        className="login-page"
         dir="rtl"
-        className="app-shell"
       >
-        <div className="loading">
-          טוען...
-        </div>
-      </div>
-    );
-  }
-
-  if (!session || !user) {
-    return (
-      <div
-        dir="rtl"
-        className="app-shell login-page"
-      >
-        <div className="login-card">
-          <div className="brand">
-            <div className="brand-icon">
-              ₪
-            </div>
-
-            <div>
-              <h1>
-                התקציב המשפחתי
-              </h1>
-              <p>
-                Kario's Budget
-              </p>
-            </div>
+        <form
+          className="login-card"
+          onSubmit={signIn}
+        >
+          <div className="logo-circle">
+            ₪
           </div>
 
-          <form
-            onSubmit={signIn}
-            className="form"
+          <h1>
+            התקציב המשפחתי
+          </h1>
+
+          <p className="muted">
+            כניסה לחשבון המשפחתי
+          </p>
+
+          <label>
+            אימייל
+
+            <input
+              type="email"
+              value={email}
+              onChange={(event) =>
+                setEmail(
+                  event.target.value
+                )
+              }
+            />
+          </label>
+
+          <label>
+            סיסמה
+
+            <input
+              type="password"
+              value={password}
+              onChange={(event) =>
+                setPassword(
+                  event.target.value
+                )
+              }
+            />
+          </label>
+
+          {loginError && (
+            <div className="error">
+              {loginError}
+            </div>
+          )}
+
+          <button
+            className="primary wide"
+            type="submit"
           >
-            <label>
-              אימייל
-              <input
-                type="email"
-                value={email}
-                onChange={(event) =>
-                  setEmail(
-                    event.target.value
-                  )
-                }
-                autoComplete="email"
-                placeholder="your@email.com"
-              />
-            </label>
+            כניסה
+          </button>
+        </form>
+      </main>
+    );
+  }
 
-            <label>
-              סיסמה
-              <input
-                type="password"
-                value={password}
-                onChange={(event) =>
-                  setPassword(
-                    event.target.value
-                  )
-                }
-                autoComplete="current-password"
-                placeholder="••••••••"
-              />
-            </label>
-
-            {loginError && (
-              <div className="error">
-                {loginError}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              className="primary full"
-            >
-              כניסה
-            </button>
-          </form>
-        </div>
-      </div>
+  if (
+    loading &&
+    !household
+  ) {
+    return (
+      <main
+        className="loading-page"
+        dir="rtl"
+      >
+        טוען...
+      </main>
     );
   }
 
   return (
-    <div
+    <main
+      className="app"
       dir="rtl"
-      className="app-shell"
     >
       <header className="topbar">
-        <div className="topbar-inner">
-          <div className="brand">
-            <div className="brand-icon">
-              ₪
-            </div>
-
-            <div>
-              <div className="brand-title">
-                {household?.name ||
-                  "התקציב המשפחתי"}
-              </div>
-
-              <div className="brand-subtitle">
-                {user.email}
-              </div>
-            </div>
+        <div>
+          <div className="eyebrow">
+            התקציב המשפחתי
           </div>
+
+          <h1>
+            {household?.name ||
+              "התקציב שלי"}
+          </h1>
+        </div>
+
+        <div className="top-actions">
+          <span className="user-name">
+            {memberMap[user.id] ||
+              "משתמשת"}
+          </span>
 
           <button
             className="ghost"
@@ -1526,1574 +1252,1339 @@ const row = {
         </div>
       </header>
 
-      <main className="container">
-        <div className="month-bar">
-          <button
-            className="month-arrow"
-            onClick={() =>
-              setMonth(previousMonth)
-            }
-          >
-            ‹
-          </button>
-
-          <div className="month-title">
-            {getMonthLabel(month)}
-          </div>
-
-          <button
-            className="month-arrow"
-            onClick={() =>
-              setMonth(nextMonth)
-            }
-          >
-            ›
-          </button>
-        </div>
-
-        <nav className="tabs">
-          <button
-            className={
-              activeTab ===
-              "dashboard"
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() =>
-              setActiveTab("dashboard")
-            }
-          >
-            סיכום
-          </button>
-
-          <button
-            className={
-              activeTab ===
-              "expenses"
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() =>
-              setActiveTab("expenses")
-            }
-          >
-            הוצאות
-          </button>
-
-          <button
-            className={
-              activeTab ===
-              "fixed"
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() =>
-              setActiveTab("fixed")
-            }
-          >
-            הוצאות קבועות
-          </button>
-
-          <button
-            className={
-              activeTab ===
-              "income"
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() =>
-              setActiveTab("income")
-            }
-          >
-            הכנסות
-          </button>
-
-          <button
-            className={
-              activeTab ===
-              "categories"
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() =>
-              setActiveTab(
-                "categories"
+      <section className="monthbar">
+        <button
+          className="month-arrow"
+          onClick={() =>
+            setMonth(
+              shiftMonth(
+                month,
+                -1
               )
-            }
-          >
-            קטגוריות
-          </button>
-        </nav>
-
-        {activeTab ===
-          "dashboard" && (
-          <section>
-            <div className="page-heading">
-              <div>
-                <h1>
-                  {getMonthLabel(month)}
-                </h1>
-                <p>
-                  תמונת מצב של התקציב
-                  המשפחתי
-                </p>
-              </div>
-
-              <button
-                className="primary"
-                onClick={() =>
-                  openTransactionModal()
-                }
-              >
-                + הוצאה
-              </button>
-            </div>
-
-            <div className="cards">
-              <div className="card">
-                <div className="card-label">
-                  הכנסות בפועל
-                </div>
-                <div className="card-value positive">
-                  {formatMoney(
-                    actualIncome
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  הוצאות בפועל
-                </div>
-                <div className="card-value negative">
-                  {formatMoney(
-                    actualExpenses
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  יתרה
-                </div>
-                <div
-                  className={
-                    balance >= 0
-                      ? "card-value positive"
-                      : "card-value negative"
-                  }
-                >
-                  {formatMoney(balance)}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  קבועות מתוכננות
-                </div>
-                <div className="card-value">
-                  {formatMoney(
-                    plannedFixed
-                  )}
-                </div>
-                <div className="card-hint">
-                  {pendingFixed.length}{" "}
-                  ממתינות לחיוב
-                </div>
-              </div>
-            </div>
-
-            <div className="two-columns">
-              <div className="panel">
-                <div className="panel-header">
-                  <h2>
-                    הוצאות בפועל
-                  </h2>
-                </div>
-
-                <div className="split-row">
-                  <span>
-                    הוצאות קבועות
-                  </span>
-                  <strong>
-                    {formatMoney(
-                      fixedActual
-                    )}
-                  </strong>
-                </div>
-
-                <div className="split-row">
-                  <span>
-                    הוצאות משתנות
-                  </span>
-                  <strong>
-                    {formatMoney(
-                      variableActual
-                    )}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="panel">
-                <div className="panel-header">
-                  <h2>
-                    קבועות שממתינות
-                  </h2>
-
-                  <button
-                    className="link-button"
-                    onClick={() =>
-                      setActiveTab(
-                        "fixed"
-                      )
-                    }
-                  >
-                    לכל ההוצאות
-                  </button>
-                </div>
-
-                {pendingFixed.length ===
-                0 ? (
-                  <div className="empty">
-                    כל ההוצאות הקבועות
-                    של החודש חויבו 🎉
-                  </div>
-                ) : (
-                  <div className="compact-list">
-                    {pendingFixed
-                      .slice(0, 5)
-                      .map((expense) => (
-                        <div
-                          className="list-row"
-                          key={
-                            expense.id
-                          }
-                        >
-                          <div>
-                            <strong>
-                              {
-                                expense.name
-                              }
-                            </strong>
-
-                            <small>
-                              יום{" "}
-                              {
-                                expense.day_of_month
-                              }
-                            </small>
-                          </div>
-
-                          <div className="row-right">
-                            <strong>
-                              {formatMoney(
-                                expense.planned_amount
-                              )}
-                            </strong>
-
-                            <button
-                              className="small primary"
-                              onClick={() =>
-                                markRecurringCharged(
-                                  expense
-                                )
-                              }
-                            >
-                              סומן כחויב
-                            </button>
-                          </div>
-                        </div>
-                      ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="panel">
-              <div className="panel-header">
-                <h2>
-                  תנועות אחרונות
-                </h2>
-
-                <button
-                  className="link-button"
-                  onClick={() =>
-                    setActiveTab(
-                      "expenses"
-                    )
-                  }
-                >
-                  לכל התנועות
-                </button>
-              </div>
-
-              {monthTransactions.length ===
-              0 ? (
-                <div className="empty">
-                  אין תנועות בחודש הזה.
-                </div>
-              ) : (
-                <TransactionTable
-                  transactions={monthTransactions.slice(
-                    0,
-                    8
-                  )}
-                  categoryMap={
-                    categoryMap
-                  }
-                  memberMap={memberMap}
-                  onEdit={
-                    openTransactionModal
-                  }
-                  onDelete={
-                    setConfirmDelete
-                  }
-                />
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeTab ===
-          "expenses" && (
-          <section>
-            <div className="page-heading">
-              <div>
-                <h1>הוצאות</h1>
-                <p>
-                  כל ההוצאות של{" "}
-                  {getMonthLabel(month)}
-                </p>
-              </div>
-
-              <button
-                className="primary"
-                onClick={() =>
-                  openTransactionModal()
-                }
-              >
-                + הוצאה
-              </button>
-            </div>
-
-            <div className="cards">
-              <div className="card">
-                <div className="card-label">
-                  סה״כ בפועל
-                </div>
-                <div className="card-value negative">
-                  {formatMoney(
-                    actualExpenses
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  קבועות
-                </div>
-                <div className="card-value">
-                  {formatMoney(
-                    fixedActual
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  משתנות
-                </div>
-                <div className="card-value">
-                  {formatMoney(
-                    variableActual
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="panel">
-              {expenseTransactions.length ===
-              0 ? (
-                <div className="empty">
-                  אין הוצאות בחודש הזה.
-                </div>
-              ) : (
-                <TransactionTable
-                  transactions={
-                    expenseTransactions
-                  }
-                  categoryMap={
-                    categoryMap
-                  }
-                  memberMap={memberMap}
-                  onEdit={
-                    openTransactionModal
-                  }
-                  onDelete={
-                    setConfirmDelete
-                  }
-                />
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeTab ===
-          "fixed" && (
-          <section>
-            <div className="page-heading">
-              <div>
-                <h1>
-                  הוצאות קבועות
-                </h1>
-
-                <p>
-                  הוצאות מתוכננות שחוזרות
-                  בכל חודש
-                </p>
-              </div>
-
-              <button
-                type="button"
-                className="primary small"
-                onClick={() =>
-                  openRecurringModal()
-                }
-              >
-                + הוצאה קבועה
-              </button>
-            </div>
-
-            <div className="cards">
-              <div className="card">
-                <div className="card-label">
-                  מתוכנן לחודש
-                </div>
-                <div className="card-value">
-                  {formatMoney(
-                    plannedFixed
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  חויב בפועל
-                </div>
-                <div className="card-value negative">
-                  {formatMoney(
-                    fixedActual
-                  )}
-                </div>
-              </div>
-
-              <div className="card">
-                <div className="card-label">
-                  ממתין לחיוב
-                </div>
-                <div className="card-value">
-                  {formatMoney(
-                    pendingFixed.reduce(
-                      (sum, expense) =>
-                        sum +
-                        Number(
-                          expense.planned_amount ||
-                            0
-                        ),
-                      0
-                    )
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="panel">
-              <div className="panel-header">
-                <h2>
-                  הוצאות קבועות לחודש
-                </h2>
-              </div>
-
-              {recurringExpenses.length ===
-              0 ? (
-                <div className="empty">
-                  עדיין אין הוצאות קבועות.
-                  <br />
-                  לחצי על "+ הוצאה קבועה"
-                  כדי להוסיף.
-                </div>
-              ) : (
-                <div className="fixed-list">
-                  {recurringExpenses.map(
-                    (expense) => {
-                      const charged =
-                        chargedRecurringIds.has(
-                          expense.id
-                        );
-
-                      return (
-                        <div
-                          className="fixed-row"
-                          key={expense.id}
-                        >
-                          <div className="fixed-main">
-                            <div className="fixed-name">
-                              {
-                                expense.name
-                              }
-                            </div>
-
-                            <div className="fixed-meta">
-                              {renderCategoryName(
-                                expense.category_id
-                              )}
-
-                              {" · "}
-
-                              יום{" "}
-                              {
-                                expense.day_of_month
-                              }
-
-                              {" · "}
-
-                              {renderMemberName(
-                                expense.person_user_id
-                              )}
-                            </div>
-
-                            {expense.merchant && (
-                              <div className="fixed-meta">
-                                {
-                                  expense.merchant
-                                }
-                              </div>
-                            )}
-                          </div>
-
-                          <div className="fixed-planned">
-                            <small>
-                              מתוכנן
-                            </small>
-                            <strong>
-                              {formatMoney(
-                                expense.planned_amount
-                              )}
-                            </strong>
-                          </div>
-
-                          <div className="fixed-status">
-                            {charged ? (
-                              <span className="badge success">
-                                חויב
-                              </span>
-                            ) : (
-                              <span className="badge warning">
-                                ממתין
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="fixed-actions">
-                            {!charged && (
-                              <button
-                                type="button"
-                                className="small primary"
-                                onClick={() =>
-                                  markRecurringCharged(
-                                    expense
-                                  )
-                                }
-                              >
-                                חיוב בפועל
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              className="small ghost"
-                              onClick={() =>
-                                openRecurringModal(
-                                  expense
-                                )
-                              }
-                            >
-                              עריכה
-                            </button>
-
-                            <button
-                              type="button"
-                              className="small danger"
-                              onClick={() =>
-                                setConfirmDelete(
-                                  {
-                                    type: "recurring",
-                                    item: expense,
-                                  }
-                                )
-                              }
-                            >
-                              מחיקה
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    }
-                  )}
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeTab ===
-          "income" && (
-          <section>
-            <div className="page-heading">
-              <div>
-                <h1>הכנסות</h1>
-                <p>
-                  הכנסות של{" "}
-                  {getMonthLabel(month)}
-                </p>
-              </div>
-
-              <button
-                className="primary"
-                onClick={() =>
-                  openTransactionModal(
-                    null,
-                    "income"
-                  )
-                }
-              >
-                + הכנסה
-              </button>
-            </div>
-
-            <div className="cards">
-              <div className="card">
-                <div className="card-label">
-                  הכנסות בפועל
-                </div>
-                <div className="card-value positive">
-                  {formatMoney(
-                    actualIncome
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="panel">
-              {incomeTransactions.length ===
-              0 ? (
-                <div className="empty">
-                  אין הכנסות בחודש הזה.
-                </div>
-              ) : (
-                <TransactionTable
-                  transactions={
-                    incomeTransactions
-                  }
-                  categoryMap={
-                    categoryMap
-                  }
-                  memberMap={memberMap}
-                  onEdit={
-                    openTransactionModal
-                  }
-                  onDelete={
-                    setConfirmDelete
-                  }
-                />
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeTab ===
-          "categories" && (
-          <section>
-            <div className="page-heading">
-              <div>
-                <h1>קטגוריות</h1>
-                <p>
-                  קטגוריות התקציב המשפחתי
-                </p>
-              </div>
-
-              <button
-                className="primary"
-                onClick={() =>
-                  setShowCategoryCreator(
-                    true
-                  )
-                }
-              >
-                + קטגוריה
-              </button>
-            </div>
-
-            <div className="category-grid">
-              {categories.map(
-                (category) => (
-                  <div
-                    className="category-card"
-                    key={category.id}
-                  >
-                    {category.name}
-                  </div>
-                )
-              )}
-            </div>
-          </section>
-        )}
-      </main>
-
-      {modal ===
-        "transaction" && (
-        <Modal
-          title={
-            editingTransaction
-              ? "עריכת הוצאה"
-              : "הוצאה חדשה"
-          }
-          onClose={
-            closeTransactionModal
+            )
           }
         >
-          <form
-            noValidate
-            className="form"
-            onSubmit={
-              saveTransaction
-            }
-          >
-            <label>
-              תיאור
-              <input
-                value={
-                  transactionForm.description
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "description",
-                    event.target.value
-                  )
-                }
-                placeholder="למשל: קניות בסופר"
+          ‹
+        </button>
+
+        <strong>
+          {monthLabel(month)}
+        </strong>
+
+        <button
+          className="month-arrow"
+          onClick={() =>
+            setMonth(
+              shiftMonth(
+                month,
+                1
+              )
+            )
+          }
+        >
+          ›
+        </button>
+      </section>
+
+      <nav className="tabs">
+        {[
+          [
+            "dashboard",
+            "סיכום",
+          ],
+          [
+            "expenses",
+            "הוצאות",
+          ],
+          [
+            "fixed",
+            "הוצאות קבועות",
+          ],
+          [
+            "income",
+            "הכנסות",
+          ],
+          [
+            "categories",
+            "קטגוריות",
+          ],
+        ].map(
+          ([id, label]) => (
+            <button
+              key={id}
+              className={
+                tab === id
+                  ? "tab active"
+                  : "tab"
+              }
+              onClick={() =>
+                setTab(id)
+              }
+            >
+              {label}
+            </button>
+          )
+        )}
+      </nav>
+
+      {error && (
+        <div className="global-error">
+          {error}
+        </div>
+      )}
+
+      {tab === "dashboard" && (
+        <>
+          <div className="page-title">
+            <div>
+              <h2>
+                סיכום חודשי
+              </h2>
+
+              <p>
+                {monthLabel(month)}
+              </p>
+            </div>
+
+            <button
+              className="primary"
+              onClick={() =>
+                openTx()
+              }
+            >
+              ＋ הוצאה
+            </button>
+          </div>
+
+          <section className="cards">
+            <Stat
+              title="הכנסות בפועל"
+              value={money(
+                actualIncome
+              )}
+              tone="positive"
+            />
+
+            <Stat
+              title="הוצאות בפועל"
+              value={money(
+                actualExpenses
+              )}
+              tone="negative"
+            />
+
+            <Stat
+              title="יתרה"
+              value={money(
+                actualIncome -
+                  actualExpenses
+              )}
+              tone={
+                actualIncome -
+                  actualExpenses >=
+                0
+                  ? "positive"
+                  : "negative"
+              }
+            />
+
+            <Stat
+              title="קבועות מתוכננות"
+              value={money(
+                plannedFixed
+              )}
+              subtitle={`${pendingRecurring.length} ממתינות לחיוב`}
+            />
+          </section>
+
+          <div className="two-columns">
+            <Panel title="קבועות מול משתנות">
+              <Bars
+                data={typeChart}
               />
-            </label>
+            </Panel>
 
-            <label>
-              קטגוריה
-              <select
-                value={
-                  transactionForm.category_id
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "category_id",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  ללא קטגוריה
-                </option>
+            <Panel title="הוצאות לפי קטגוריה">
+              {categoryChart.length ? (
+                <Bars
+                  data={categoryChart}
+                />
+              ) : (
+                <Empty
+                  text="אין עדיין הוצאות בפועל בחודש הזה."
+                />
+              )}
+            </Panel>
+          </div>
 
-                {categories.map(
-                  (category) => (
-                    <option
-                      key={category.id}
-                      value={
-                        category.id
+          <div className="two-columns">
+            <Panel title="הוצאות קבועות ממתינות לחיוב">
+              {pendingRecurring.length ? (
+                <div className="fixed-list">
+                  {pendingRecurring
+                    .slice(0, 6)
+                    .map((item) => (
+                      <div
+                        className="fixed-item"
+                        key={item.id}
+                      >
+                        <div>
+                          <strong>
+                            {item.name}
+                          </strong>
+
+                          <small>
+                            יום{" "}
+                            {
+                              item.day_of_month
+                            }{" "}
+                            ·{" "}
+                            {money(
+                              item.planned_amount
+                            )}
+                          </small>
+                        </div>
+
+                        <button
+                          className="small primary"
+                          onClick={() =>
+                            chargeRecurring(
+                              item
+                            )
+                          }
+                        >
+                          סימון כחויבה
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              ) : (
+                <Empty
+                  text="כל ההוצאות הקבועות סומנו כחויבות."
+                />
+              )}
+            </Panel>
+
+            <Panel title="תנועות אחרונות">
+              {transactions
+                .slice(0, 7)
+                .map((transaction) => (
+                  <div
+                    className="recent-row"
+                    key={transaction.id}
+                  >
+                    <div>
+                      <strong>
+                        {
+                          transaction.description
+                        }
+                      </strong>
+
+                      <small>
+                        {dateText(
+                          transaction.transaction_date
+                        )}{" "}
+                        ·{" "}
+                        {categoryMap[
+                          transaction.category_id
+                        ] ||
+                          "ללא קטגוריה"}
+                      </small>
+                    </div>
+
+                    <strong
+                      className={
+                        transaction.kind ===
+                        "income"
+                          ? "positive"
+                          : "negative"
                       }
                     >
-                      {category.name}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
+                      {transaction.kind ===
+                      "income"
+                        ? "+"
+                        : "-"}
+                      {money(
+                        transaction.actual_amount
+                      )}
+                    </strong>
+                  </div>
+                ))}
 
-            <label>
-              סוג הוצאה
-              <select
-                value={
-                  transactionForm.expense_type
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "expense_type",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="variable">
-                  משתנה — בפועל בלבד
-                </option>
-                <option value="fixed">
-                  קבועה — מתוכנן + בפועל
-                </option>
-              </select>
-            </label>
+              {!transactions.length && (
+                <Empty
+                  text="אין תנועות בחודש הזה."
+                />
+              )}
+            </Panel>
+          </div>
+        </>
+      )}
 
-            {transactionForm.expense_type ===
-              "fixed" && (
+      {tab === "expenses" && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>
+                הוצאות
+              </h2>
+
+              <p>
+                כל ההוצאות בפועל בחודש הנבחר
+              </p>
+            </div>
+
+            <button
+              className="primary"
+              onClick={() =>
+                openTx()
+              }
+            >
+              ＋ הוצאה
+            </button>
+          </div>
+
+          <TransactionTable
+            transactions={expenseTx}
+            categoryMap={categoryMap}
+            memberMap={memberMap}
+            onEdit={openTx}
+            onDelete={(transaction) =>
+              setConfirm({
+                type: "tx",
+                item: transaction,
+              })
+            }
+          />
+        </section>
+      )}
+
+      {tab === "fixed" && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>
+                הוצאות קבועות
+              </h2>
+
+              <p>
+                מתוכנן ובפועל. חיוב בפועל נכנס להוצאות רק לאחר סימון כחויב.
+              </p>
+            </div>
+
+            <button
+              className="primary"
+              onClick={() =>
+                openRecurring()
+              }
+            >
+              ＋ הוצאה קבועה
+            </button>
+          </div>
+
+          <div className="fixed-summary">
+            <Stat
+              title="מתוכנן"
+              value={money(
+                plannedFixed
+              )}
+            />
+
+            <Stat
+              title="בפועל"
+              value={money(
+                fixedActual
+              )}
+              tone="negative"
+            />
+
+            <Stat
+              title="ממתין"
+              value={money(
+                pendingPlanned
+              )}
+            />
+          </div>
+
+          <div className="fixed-list large">
+            {recurring.map(
+              (item) => {
+                const charged =
+                  chargedRecurringIds.has(
+                    item.id
+                  );
+
+                const transaction =
+                  expenseTx.find(
+                    (t) =>
+                      t.recurring_expense_id ===
+                        item.id &&
+                      t.recurring_month ===
+                        month
+                  );
+
+                const actual =
+                  transaction?.actual_amount;
+
+                return (
+                  <div
+                    className="fixed-card"
+                    key={item.id}
+                  >
+                    <div className="fixed-main">
+                      <strong>
+                        {item.name}
+                      </strong>
+
+                      <span>
+                        {
+                          categoryMap[
+                            item.category_id
+                          ] ||
+                          "ללא קטגוריה"
+                        }{" "}
+                        · יום{" "}
+                        {
+                          item.day_of_month
+                        }
+                      </span>
+                    </div>
+
+                    <div className="amounts">
+                      <span>
+                        מתוכנן
+
+                        <b>
+                          {money(
+                            item.planned_amount
+                          )}
+                        </b>
+                      </span>
+
+                      <span>
+                        בפועל
+
+                        <b>
+                          {charged
+                            ? money(
+                                actual
+                              )
+                            : "—"}
+                        </b>
+                      </span>
+                    </div>
+
+                    <div className="row-actions">
+                      {charged ? (
+                        <span className="badge success">
+                          חויבה
+                        </span>
+                      ) : (
+                        <button
+                          className="small primary"
+                          onClick={() =>
+                            chargeRecurring(
+                              item
+                            )
+                          }
+                        >
+                          סימון כחויבה
+                        </button>
+                      )}
+
+                      <button
+                        className="icon"
+                        onClick={() =>
+                          openRecurring(
+                            item
+                          )
+                        }
+                      >
+                        ✎
+                      </button>
+
+                      <button
+                        className="icon danger"
+                        onClick={() =>
+                          setConfirm({
+                            type: "recurring",
+                            item,
+                          })
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                );
+              }
+            )}
+
+            {!recurring.length && (
+              <Empty
+                text="עדיין לא הוגדרו הוצאות קבועות."
+              />
+            )}
+          </div>
+        </section>
+      )}
+
+      {tab === "income" && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>
+                הכנסות
+              </h2>
+
+              <p>
+                הכנסות בפועל בחודש הנבחר
+              </p>
+            </div>
+
+            <button
+              className="primary"
+              onClick={() =>
+                openTx(
+                  null,
+                  "income"
+                )
+              }
+            >
+              ＋ הכנסה
+            </button>
+          </div>
+
+          <TransactionTable
+            transactions={incomeTx}
+            categoryMap={categoryMap}
+            memberMap={memberMap}
+            onEdit={openTx}
+            onDelete={(transaction) =>
+              setConfirm({
+                type: "tx",
+                item: transaction,
+              })
+            }
+          />
+        </section>
+      )}
+
+      {tab === "categories" && (
+        <section className="panel">
+          <div className="panel-head">
+            <div>
+              <h2>
+                קטגוריות
+              </h2>
+
+              <p>
+                ניתן להוסיף קטגוריה חדשה.
+              </p>
+            </div>
+          </div>
+
+          <div className="category-add">
+            <input
+              value={newCategory}
+              onChange={(event) =>
+                setNewCategory(
+                  event.target.value
+                )
+              }
+              placeholder="שם קטגוריה חדשה"
+            />
+
+            <button
+              className="primary"
+              onClick={addCategory}
+              disabled={saving}
+            >
+              הוספה
+            </button>
+          </div>
+
+          <div className="category-grid">
+            {categories.map(
+              (category) => (
+                <div
+                  className="category-card"
+                  key={category.id}
+                >
+                  <strong>
+                    {category.name}
+                  </strong>
+                </div>
+              )
+            )}
+          </div>
+        </section>
+      )}
+
+      {modal && (
+        <Modal
+          title={
+            modal === "recurring"
+              ? editingRecurring
+                ? "עריכת הוצאה קבועה"
+                : "הוצאה קבועה חדשה"
+              : editingTx
+              ? "עריכת תנועה"
+              : modal === "income"
+              ? "הכנסה חדשה"
+              : "הוצאה חדשה"
+          }
+          onClose={closeModal}
+        >
+          {modal ===
+          "recurring" ? (
+            <form
+              className="form"
+              onSubmit={
+                saveRecurring
+              }
+            >
               <label>
-                סכום מתוכנן
+                שם ההוצאה
+
+                <input
+                  value={
+                    recForm.name
+                  }
+                  onChange={(event) =>
+                    setRecForm({
+                      ...recForm,
+                      name: event.target
+                        .value,
+                    })
+                  }
+                />
+              </label>
+
+              <label>
+                קטגוריה
+
+                <select
+                  value={
+                    recForm.category_id
+                  }
+                  onChange={(event) =>
+                    setRecForm({
+                      ...recForm,
+                      category_id:
+                        event.target
+                          .value,
+                    })
+                  }
+                >
+                  <option value="">
+                    ללא קטגוריה
+                  </option>
+
+                  {categories.map(
+                    (category) => (
+                      <option
+                        key={
+                          category.id
+                        }
+                        value={
+                          category.id
+                        }
+                      >
+                        {
+                          category.name
+                        }
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
+              <div className="form-grid">
+                <label>
+                  סכום מתוכנן
+
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={
+                      recForm.planned_amount
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setRecForm({
+                        ...recForm,
+                        planned_amount:
+                          event.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
+
+                <label>
+                  יום בחודש
+
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={
+                      recForm.day_of_month
+                    }
+                    onChange={(
+                      event
+                    ) =>
+                      setRecForm({
+                        ...recForm,
+                        day_of_month:
+                          event.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
+              <label>
+                בית עסק
+
+                <input
+                  value={
+                    recForm.merchant
+                  }
+                  onChange={(event) =>
+                    setRecForm({
+                      ...recForm,
+                      merchant:
+                        event.target
+                          .value,
+                    })
+                  }
+                />
+              </label>
+
+              <label>
+                אמצעי תשלום
+
+                <select
+                  value={
+                    recForm.payment_method
+                  }
+                  onChange={(event) =>
+                    setRecForm({
+                      ...recForm,
+                      payment_method:
+                        event.target
+                          .value,
+                    })
+                  }
+                >
+                  <option value="">
+                    לא צוין
+                  </option>
+
+                  <option value="credit_card">
+                    כרטיס אשראי
+                  </option>
+
+                  <option value="bank">
+                    חשבון בנק
+                  </option>
+
+                  <option value="cash">
+                    מזומן
+                  </option>
+
+                  <option value="bit">
+                    ביט
+                  </option>
+
+                  <option value="paybox">
+                    פייבוקס
+                  </option>
+
+                  <option value="other">
+                    אחר
+                  </option>
+                </select>
+              </label>
+
+              <label>
+                על שם מי
+
+                <select
+                  value={
+                    recForm.person_user_id
+                  }
+                  onChange={(event) =>
+                    setRecForm({
+                      ...recForm,
+                      person_user_id:
+                        event.target
+                          .value,
+                    })
+                  }
+                >
+                  <option value="">
+                    לא צוין
+                  </option>
+
+                  {profiles.map(
+                    (profile) => (
+                      <option
+                        key={
+                          profile.id
+                        }
+                        value={
+                          profile.id
+                        }
+                      >
+                        {
+                          profile.display_name
+                        }
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
+              <label>
+                הערה
+
+                <textarea
+                  rows="3"
+                  value={
+                    recForm.note
+                  }
+                  onChange={(event) =>
+                    setRecForm({
+                      ...recForm,
+                      note: event.target
+                        .value,
+                    })
+                  }
+                />
+              </label>
+
+              {error && (
+                <div className="error">
+                  {error}
+                </div>
+              )}
+
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={
+                    closeModal
+                  }
+                >
+                  ביטול
+                </button>
+
+                <button
+                  className="primary"
+                  disabled={saving}
+                >
+                  {saving
+                    ? "שומר..."
+                    : "שמירה"}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <form
+              className="form"
+              onSubmit={saveTx}
+            >
+              <label>
+                {modal ===
+                "income"
+                  ? "מקור ההכנסה"
+                  : "תיאור"}
+
+                <input
+                  value={
+                    txForm.description
+                  }
+                  onChange={(event) =>
+                    setTxForm({
+                      ...txForm,
+                      description:
+                        event.target
+                          .value,
+                    })
+                  }
+                />
+              </label>
+
+              {modal !==
+                "income" && (
+                <label>
+                  סוג הוצאה
+
+                  <select
+                    value={
+                      txForm.expense_type
+                    }
+                    onChange={(event) =>
+                      setTxForm({
+                        ...txForm,
+                        expense_type:
+                          event.target
+                            .value,
+                      })
+                    }
+                  >
+                    <option value="variable">
+                      משתנה – בפועל בלבד
+                    </option>
+
+                    <option value="fixed">
+                      קבועה – מתוכנן ובפועל
+                    </option>
+                  </select>
+                </label>
+              )}
+
+              <label>
+                קטגוריה
+
+                <select
+                  value={
+                    txForm.category_id
+                  }
+                  onChange={(event) =>
+                    setTxForm({
+                      ...txForm,
+                      category_id:
+                        event.target
+                          .value,
+                    })
+                  }
+                >
+                  <option value="">
+                    ללא קטגוריה
+                  </option>
+
+                  {categories.map(
+                    (category) => (
+                      <option
+                        key={
+                          category.id
+                        }
+                        value={
+                          category.id
+                        }
+                      >
+                        {
+                          category.name
+                        }
+                      </option>
+                    )
+                  )}
+                </select>
+              </label>
+
+              {modal !==
+                "income" &&
+                txForm.expense_type ===
+                  "fixed" && (
+                  <label>
+                    סכום מתוכנן
+
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      value={
+                        txForm.planned_amount
+                      }
+                      onChange={(
+                        event
+                      ) =>
+                        setTxForm({
+                          ...txForm,
+                          planned_amount:
+                            event.target
+                              .value,
+                        })
+                      }
+                    />
+                  </label>
+                )}
+
+              <label>
+                סכום בפועל
+
                 <input
                   type="number"
                   min="0"
                   step="0.01"
                   value={
-                    transactionForm.planned_amount
+                    txForm.actual_amount
                   }
                   onChange={(event) =>
-                    updateTransactionField(
-                      "planned_amount",
-                      event.target.value
-                    )
+                    setTxForm({
+                      ...txForm,
+                      actual_amount:
+                        event.target
+                          .value,
+                    })
+                  }
+                  placeholder={
+                    modal === "income"
+                      ? ""
+                      : "השאירי ריק אם טרם חויב"
                   }
                 />
               </label>
-            )}
 
-            <label>
-              סכום בפועל
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={
-                  transactionForm.actual_amount
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "actual_amount",
-                    event.target.value
-                  )
-                }
-                placeholder={
-                  transactionForm.expense_type ===
-                  "fixed"
-                    ? "אפשר להשאיר ריק עד לחיוב"
-                    : "סכום בפועל"
-                }
-              />
-            </label>
+              <div className="form-grid">
+                <label>
+                  תאריך
 
-            <label>
-              תאריך
-              <input
-                type="date"
-                value={
-                  transactionForm.transaction_date
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "transaction_date",
-                    event.target.value
-                  )
-                }
-              />
-            </label>
+                  <input
+                    type="date"
+                    value={
+                      txForm.transaction_date
+                    }
+                    onChange={(event) =>
+                      setTxForm({
+                        ...txForm,
+                        transaction_date:
+                          event.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
 
-            <label>
-              מי שילם?
-              <select
-                value={
-                  transactionForm.person_user_id
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "person_user_id",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  לא צוין
-                </option>
+                <label>
+                  על שם מי
 
-                {profiles.map(
-                  (profile) => (
-                    <option
-                      key={profile.id}
-                      value={profile.id}
-                    >
-                      {
-                        profile.display_name
-                      }
+                  <select
+                    value={
+                      txForm.person_user_id
+                    }
+                    onChange={(event) =>
+                      setTxForm({
+                        ...txForm,
+                        person_user_id:
+                          event.target
+                            .value,
+                      })
+                    }
+                  >
+                    <option value="">
+                      לא צוין
                     </option>
-                  )
-                )}
-              </select>
-            </label>
 
-            <label>
-              בית עסק
-              <input
-                value={
-                  transactionForm.merchant
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "merchant",
-                    event.target.value
-                  )
-                }
-                placeholder="למשל: שופרסל"
-              />
-            </label>
+                    {profiles.map(
+                      (profile) => (
+                        <option
+                          key={
+                            profile.id
+                          }
+                          value={
+                            profile.id
+                          }
+                        >
+                          {
+                            profile.display_name
+                          }
+                        </option>
+                      )
+                    )}
+                  </select>
+                </label>
+              </div>
 
-            <label>
-              אמצעי תשלום
-              <select
-                value={
-                  transactionForm.payment_method
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "payment_method",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  לא צוין
-                </option>
-                <option value="credit_card">
-                  כרטיס אשראי
-                </option>
-                <option value="bank">
-                  חשבון בנק
-                </option>
-                <option value="cash">
-                  מזומן
-                </option>
-                <option value="bit">
-                  ביט
-                </option>
-                <option value="paybox">
-                  פייבוקס
-                </option>
-                <option value="other">
-                  אחר
-                </option>
-              </select>
-            </label>
+              <div className="form-grid">
+                <label>
+                  בית עסק
 
-            {transactionForm.payment_method ===
-              "credit_card" && (
+                  <input
+                    value={
+                      txForm.merchant
+                    }
+                    onChange={(event) =>
+                      setTxForm({
+                        ...txForm,
+                        merchant:
+                          event.target
+                            .value,
+                      })
+                    }
+                  />
+                </label>
+
+                <label>
+                  4 ספרות אחרונות
+
+                  <input
+                    inputMode="numeric"
+                    maxLength="4"
+                    value={
+                      txForm.credit_card_last4
+                    }
+                    onChange={(event) =>
+                      setTxForm({
+                        ...txForm,
+                        credit_card_last4:
+                          event.target.value
+                            .replace(
+                              /\D/g,
+                              ""
+                            )
+                            .slice(
+                              -4
+                            ),
+                      })
+                    }
+                  />
+                </label>
+              </div>
+
               <label>
-                4 ספרות אחרונות של הכרטיס
-                <input
-                  inputMode="numeric"
-                  maxLength={4}
+                אמצעי תשלום
+
+                <select
                   value={
-                    transactionForm.credit_card_last4
+                    txForm.payment_method
                   }
                   onChange={(event) =>
-                    updateTransactionField(
-                      "credit_card_last4",
-                      event.target.value
-                        .replace(/\D/g, "")
-                        .slice(0, 4)
-                    )
+                    setTxForm({
+                      ...txForm,
+                      payment_method:
+                        event.target
+                          .value,
+                    })
                   }
-                  placeholder="1234"
+                >
+                  <option value="">
+                    לא צוין
+                  </option>
+
+                  <option value="credit_card">
+                    כרטיס אשראי
+                  </option>
+
+                  <option value="bank">
+                    חשבון בנק
+                  </option>
+
+                  <option value="cash">
+                    מזומן
+                  </option>
+
+                  <option value="bit">
+                    ביט
+                  </option>
+
+                  <option value="paybox">
+                    פייבוקס
+                  </option>
+
+                  <option value="other">
+                    אחר
+                  </option>
+                </select>
+              </label>
+
+              <label>
+                הערה
+
+                <textarea
+                  rows="3"
+                  value={
+                    txForm.note
+                  }
+                  onChange={(event) =>
+                    setTxForm({
+                      ...txForm,
+                      note: event.target
+                        .value,
+                    })
+                  }
                 />
               </label>
-            )}
 
-            <label>
-              הערה
-              <textarea
-                value={
-                  transactionForm.note
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "note",
-                    event.target.value
-                  )
-                }
-                rows={3}
-              />
-            </label>
+              {error && (
+                <div className="error">
+                  {error}
+                </div>
+              )}
 
-            {saveError && (
-              <div className="error pre">
-                {saveError}
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  className="ghost"
+                  onClick={
+                    closeModal
+                  }
+                >
+                  ביטול
+                </button>
+
+                <button
+                  className="primary"
+                  disabled={saving}
+                >
+                  {saving
+                    ? "שומר..."
+                    : "שמירה"}
+                </button>
               </div>
-            )}
-
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="ghost"
-                onClick={
-                  closeTransactionModal
-                }
-                disabled={saving}
-              >
-                ביטול
-              </button>
-
-              <button
-                type="submit"
-                className="primary"
-                disabled={saving}
-              >
-                {saving
-                  ? "שומר..."
-                  : "שמירה"}
-              </button>
-            </div>
-          </form>
+            </form>
+          )}
         </Modal>
       )}
 
-      {modal ===
-        "income" && (
-        <Modal
-          title={
-            editingTransaction
-              ? "עריכת הכנסה"
-              : "הכנסה חדשה"
-          }
-          onClose={
-            closeTransactionModal
-          }
-        >
-          <form
-            noValidate
-            className="form"
-            onSubmit={
-              saveTransaction
-            }
-          >
-            <label>
-              מקור ההכנסה
-              <input
-                value={
-                  transactionForm.description
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "description",
-                    event.target.value
-                  )
-                }
-                placeholder="למשל: משכורת"
-              />
-            </label>
-
-            <label>
-              קטגוריה
-              <select
-                value={
-                  transactionForm.category_id
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "category_id",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  ללא קטגוריה
-                </option>
-
-                {categories.map(
-                  (category) => (
-                    <option
-                      key={category.id}
-                      value={
-                        category.id
-                      }
-                    >
-                      {category.name}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              סכום
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={
-                  transactionForm.actual_amount
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "actual_amount",
-                    event.target.value
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              למי?
-              <select
-                value={
-                  transactionForm.person_user_id
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "person_user_id",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  לא צוין
-                </option>
-
-                {profiles.map(
-                  (profile) => (
-                    <option
-                      key={profile.id}
-                      value={profile.id}
-                    >
-                      {
-                        profile.display_name
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              תאריך
-              <input
-                type="date"
-                value={
-                  transactionForm.transaction_date
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "transaction_date",
-                    event.target.value
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              הערה
-              <textarea
-                value={
-                  transactionForm.note
-                }
-                onChange={(event) =>
-                  updateTransactionField(
-                    "note",
-                    event.target.value
-                  )
-                }
-                rows={3}
-              />
-            </label>
-
-            {saveError && (
-              <div className="error pre">
-                {saveError}
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="ghost"
-                onClick={
-                  closeTransactionModal
-                }
-                disabled={saving}
-              >
-                ביטול
-              </button>
-
-              <button
-                type="submit"
-                className="primary"
-                disabled={saving}
-              >
-                {saving
-                  ? "שומר..."
-                  : "שמירה"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {modal ===
-        "recurring" && (
-        <Modal
-          title={
-            editingRecurring
-              ? "עריכת הוצאה קבועה"
-              : "הוצאה קבועה חדשה"
-          }
-          onClose={
-            closeRecurringModal
-          }
-        >
-          <form
-            noValidate
-            className="form"
-            onSubmit={saveRecurring}
-          >
-            <label>
-              שם ההוצאה
-              <input
-                value={
-                  recurringForm.name
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "name",
-                    event.target.value
-                  )
-                }
-                placeholder="למשל: משכנתא"
-              />
-            </label>
-
-            <label>
-              קטגוריה
-              <select
-                value={
-                  recurringForm.category_id
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "category_id",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  ללא קטגוריה
-                </option>
-
-                {categories.map(
-                  (category) => (
-                    <option
-                      key={category.id}
-                      value={
-                        category.id
-                      }
-                    >
-                      {category.name}
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              סכום מתוכנן
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={
-                  recurringForm.planned_amount
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "planned_amount",
-                    event.target.value
-                  )
-                }
-                placeholder="8000"
-              />
-            </label>
-
-            <label>
-              יום בחודש
-              <input
-                type="number"
-                min="1"
-                max="31"
-                step="1"
-                value={
-                  recurringForm.day_of_month
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "day_of_month",
-                    event.target.value
-                  )
-                }
-              />
-            </label>
-
-            <label>
-              בית עסק
-              <input
-                value={
-                  recurringForm.merchant
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "merchant",
-                    event.target.value
-                  )
-                }
-                placeholder="למשל: בנק לאומי"
-              />
-            </label>
-
-            <label>
-              אמצעי תשלום
-              <select
-                value={
-                  recurringForm.payment_method
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "payment_method",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  לא צוין
-                </option>
-                <option value="credit_card">
-                  כרטיס אשראי
-                </option>
-                <option value="bank">
-                  חשבון בנק
-                </option>
-                <option value="cash">
-                  מזומן
-                </option>
-                <option value="bit">
-                  ביט
-                </option>
-                <option value="paybox">
-                  פייבוקס
-                </option>
-                <option value="other">
-                  אחר
-                </option>
-              </select>
-            </label>
-
-            <label>
-              על שם מי?
-              <select
-                value={
-                  recurringForm.person_user_id
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "person_user_id",
-                    event.target.value
-                  )
-                }
-              >
-                <option value="">
-                  לא צוין
-                </option>
-
-                {profiles.map(
-                  (profile) => (
-                    <option
-                      key={profile.id}
-                      value={profile.id}
-                    >
-                      {
-                        profile.display_name
-                      }
-                    </option>
-                  )
-                )}
-              </select>
-            </label>
-
-            <label>
-              הערה
-              <textarea
-                value={
-                  recurringForm.note
-                }
-                onChange={(event) =>
-                  updateRecurringField(
-                    "note",
-                    event.target.value
-                  )
-                }
-                rows={3}
-                placeholder="הערה אופציונלית"
-              />
-            </label>
-
-            <div className="info-box">
-              <strong>
-                חשוב:
-              </strong>{" "}
-              ההוצאה הזו היא תכנון חודשי.
-              היא לא נחשבת כהוצאה בפועל
-              עד שתסמני שהיא חויבה ותזיני
-              את הסכום בפועל.
-            </div>
-
-            {saveError && (
-              <div className="error pre">
-                {saveError}
-              </div>
-            )}
-
-            <div className="modal-actions">
-              <button
-                type="button"
-                className="ghost"
-                onClick={
-                  closeRecurringModal
-                }
-                disabled={saving}
-              >
-                ביטול
-              </button>
-
-              <button
-                type="submit"
-                className="primary"
-                disabled={saving}
-              >
-                {saving
-                  ? "שומר..."
-                  : editingRecurring
-                  ? "שמירת שינויים"
-                  : "הוספת הוצאה קבועה"}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-
-      {showCategoryCreator && (
-        <Modal
-          title="קטגוריה חדשה"
-          onClose={() =>
-            setShowCategoryCreator(
-              false
-            )
-          }
-        >
-          <div className="form">
-            <label>
-              שם הקטגוריה
-              <input
-                autoFocus
-                value={newCategoryName}
-                onChange={(event) =>
-                  setNewCategoryName(
-                    event.target.value
-                  )
-                }
-                placeholder="למשל: חוגים"
-              />
-            </label>
-
-            <div className="modal-actions">
-              <button
-                className="ghost"
-                onClick={() =>
-                  setShowCategoryCreator(
-                    false
-                  )
-                }
-              >
-                ביטול
-              </button>
-
-              <button
-                className="primary"
-                onClick={addCategory}
-              >
-                הוספה
-              </button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {confirmDelete && (
+      {confirm && (
         <Modal
           title="אישור מחיקה"
           onClose={() =>
-            setConfirmDelete(null)
+            setConfirm(null)
           }
         >
-          <div className="confirm-box">
-            <p>
-              האם את בטוחה שאת רוצה למחוק
-              את{" "}
-              <strong>
-                {confirmDelete.item
-                  ?.name ||
-                  confirmDelete.item
-                    ?.description ||
-                  "הרשומה"}
-              </strong>
-              ?
-            </p>
+          <p>
+            למחוק את{" "}
+            <strong>
+              {confirm.item.name ||
+                confirm.item
+                  .description}
+            </strong>
+            ?
+          </p>
 
-            <p className="muted">
-              לא ניתן לבטל את המחיקה.
-            </p>
+          <div className="modal-actions">
+            <button
+              className="ghost"
+              onClick={() =>
+                setConfirm(null)
+              }
+            >
+              ביטול
+            </button>
 
-            <div className="modal-actions">
-              <button
-                className="ghost"
-                onClick={() =>
-                  setConfirmDelete(null)
-                }
-              >
-                ביטול
-              </button>
-
-              <button
-                className="danger-button"
-                disabled={saving}
-                onClick={() => {
-                  if (
-                    confirmDelete.type ===
-                    "recurring"
-                  ) {
-                    deleteRecurring(
-                      confirmDelete.item
-                    );
-                  } else {
-                    deleteTransaction(
-                      confirmDelete.item
-                    );
-                  }
-                }}
-              >
-                {saving
-                  ? "מוחק..."
-                  : "כן, למחוק"}
-              </button>
-            </div>
+            <button
+              className="danger-button"
+              onClick={() =>
+                confirm.type ===
+                "tx"
+                  ? deleteTx(
+                      confirm.item
+                    )
+                  : deleteRecurring(
+                      confirm.item
+                    )
+              }
+            >
+              כן, למחוק
+            </button>
           </div>
         </Modal>
       )}
+    </main>
+  );
+}
+
+function Stat({
+  title,
+  value,
+  subtitle,
+  tone = "",
+}) {
+  return (
+    <div className="stat">
+      <span>
+        {title}
+      </span>
+
+      <strong className={tone}>
+        {value}
+      </strong>
+
+      {subtitle && (
+        <small>
+          {subtitle}
+        </small>
+      )}
+    </div>
+  );
+}
+
+function Panel({
+  title,
+  children,
+}) {
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>
+          {title}
+        </h2>
+      </div>
+
+      {children}
+    </section>
+  );
+}
+
+function Empty({
+  text,
+}) {
+  return (
+    <div className="empty">
+      {text}
+    </div>
+  );
+}
+
+function Bars({
+  data,
+}) {
+  const max = Math.max(
+    ...data.map(
+      (item) => item.value
+    ),
+    1
+  );
+
+  return (
+    <div className="chart-list">
+      {data.map((item) => (
+        <div
+          className="chart-row"
+          key={item.label}
+        >
+          <div className="chart-label">
+            {item.label}
+          </div>
+
+          <div className="chart-track">
+            <div
+              className="chart-bar"
+              style={{
+                width: `${
+                  (item.value /
+                    max) *
+                  100
+                }%`,
+              }}
+            />
+          </div>
+
+          <strong>
+            {money(item.value)}
+          </strong>
+        </div>
+      ))}
     </div>
   );
 }
@@ -3110,13 +2601,34 @@ function TransactionTable({
       <table className="transactions-table">
         <thead>
           <tr>
-            <th>תאריך</th>
-            <th>תיאור</th>
-            <th>קטגוריה</th>
-            <th>סוג</th>
-            <th>מתוכנן</th>
-            <th>בפועל</th>
-            <th>מי</th>
+            <th>
+              תאריך
+            </th>
+
+            <th>
+              תיאור
+            </th>
+
+            <th>
+              קטגוריה
+            </th>
+
+            <th>
+              סוג
+            </th>
+
+            <th>
+              מתוכנן
+            </th>
+
+            <th>
+              בפועל
+            </th>
+
+            <th>
+              מי
+            </th>
+
             <th></th>
           </tr>
         </thead>
@@ -3124,26 +2636,18 @@ function TransactionTable({
         <tbody>
           {transactions.map(
             (transaction) => {
-              const isIncome =
+              const income =
                 transaction.kind ===
                 "income";
 
-              const actual =
-                getTransactionActualAmount(
-                  transaction
-                );
-
-              const planned =
-                getTransactionPlannedAmount(
-                  transaction
-                );
-
               return (
                 <tr
-                  key={transaction.id}
+                  key={
+                    transaction.id
+                  }
                 >
                   <td>
-                    {formatDate(
+                    {dateText(
                       transaction.transaction_date
                     )}
                   </td>
@@ -3181,55 +2685,53 @@ function TransactionTable({
                   </td>
 
                   <td>
-                    {isIncome ? (
-                      <span className="badge success">
-                        הכנסה
-                      </span>
-                    ) : (
-                      <span
-                        className={
-                          transaction.expense_type ===
+                    <span
+                      className={`badge ${
+                        income
+                          ? "success"
+                          : transaction.expense_type ===
+                            "fixed"
+                          ? "fixed"
+                          : "variable"
+                      }`}
+                    >
+                      {income
+                        ? "הכנסה"
+                        : transaction.expense_type ===
                           "fixed"
-                            ? "badge fixed"
-                            : "badge variable"
-                        }
-                      >
-                        {transaction.expense_type ===
-                        "fixed"
-                          ? "קבועה"
-                          : "משתנה"}
-                      </span>
-                    )}
+                        ? "קבועה"
+                        : "משתנה"}
+                    </span>
                   </td>
 
                   <td>
-                    {!isIncome &&
+                    {!income &&
                     transaction.expense_type ===
                       "fixed"
-                      ? formatMoney(
-                          planned
+                      ? money(
+                          transaction.planned_amount
                         )
                       : "—"}
                   </td>
 
                   <td
                     className={
-                      isIncome
-                        ? "money-positive"
-                        : "money-negative"
+                      income
+                        ? "positive"
+                        : "negative"
                     }
                   >
-                    {actual
-                      ? formatMoney(
-                          actual
-                        )
-                      : "—"}
+                    {transaction.actual_amount ===
+                    null
+                      ? "—"
+                      : money(
+                          transaction.actual_amount
+                        )}
                   </td>
 
                   <td>
                     {memberMap[
-                      transaction
-                        .person_user_id
+                      transaction.person_user_id
                     ] ||
                       "לא צוין"}
                   </td>
@@ -3237,12 +2739,11 @@ function TransactionTable({
                   <td>
                     <div className="table-actions">
                       <button
-                        className="icon-button"
-                        title="עריכה"
+                        className="icon"
                         onClick={() =>
                           onEdit(
                             transaction,
-                            isIncome
+                            income
                               ? "income"
                               : "expense"
                           )
@@ -3252,13 +2753,11 @@ function TransactionTable({
                       </button>
 
                       <button
-                        className="icon-button danger"
-                        title="מחיקה"
+                        className="icon danger"
                         onClick={() =>
-                          onDelete({
-                            type: "transaction",
-                            item: transaction,
-                          })
+                          onDelete(
+                            transaction
+                          )
                         }
                       >
                         ×
@@ -3271,6 +2770,12 @@ function TransactionTable({
           )}
         </tbody>
       </table>
+
+      {!transactions.length && (
+        <Empty
+          text="אין תנועות בחודש הזה."
+        />
+      )}
     </div>
   );
 }
@@ -3293,13 +2798,17 @@ function Modal({
       }}
     >
       <div className="modal">
-        <div className="modal-header">
-          <h2>{title}</h2>
+        <div className="modal-head">
+          <h2>
+            {title}
+          </h2>
 
           <button
             type="button"
             className="modal-close"
-            onClick={onClose}
+            onClick={
+              onClose
+            }
           >
             ×
           </button>
@@ -3311,4 +2820,4 @@ function Modal({
       </div>
     </div>
   );
-}
+                }
