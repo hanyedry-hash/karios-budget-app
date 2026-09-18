@@ -1251,3 +1251,74 @@ textarea:focus {
     grid-template-columns: 60px minmax(0, 1fr) auto;
   }
 }
+/* =========================
+   CLEAN TRANSACTION LIST
+========================= */
+
+.transaction-list {
+  width: 100%;
+  display: grid;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.transaction-list-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 4px;
+  border: 0;
+  border-bottom: 1px solid #edf0f4;
+  background: transparent;
+  color: #202633;
+  text-align: right;
+  border-radius: 8px;
+}
+
+.transaction-list-row:hover {
+  background: #f7f8fc;
+}
+
+.transaction-list-row:last-child {
+  border-bottom: 0;
+}
+
+.transaction-date {
+  color: #7b8494;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.transaction-description {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.transaction-list-row > strong {
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+@media (max-width: 600px) {
+  .transaction-list-row {
+    grid-template-columns: 90px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 14px 2px;
+  }
+
+  .transaction-date {
+    font-size: 12px;
+  }
+
+  .transaction-description {
+    font-size: 15px;
+  }
+
+  .transaction-list-row > strong {
+    font-size: 15px;
+  }
+}
