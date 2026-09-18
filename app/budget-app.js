@@ -96,15 +96,17 @@ function normalizeProvider(value) {
 
   if (
     text.includes("ישראכרט") ||
-    text.includes("isracard")
+    text.includes("isracard") ||
+    text.includes("flycard")
   ) {
     return "isracard";
   }
 
   if (
     text.includes("כאל") ||
-    text.includes("cal") ||
-    text.includes("cardcom")
+    /(^|\W)cal(\W|$)/i.test(text) ||
+    text.includes("cardcom") ||
+    text.includes("calonline")
   ) {
     return "cal";
   }
@@ -201,37 +203,71 @@ function normalizeDate(value) {
   return "";
 }
 
-function detectCardLast4(text) {
-  const value = String(text || "");
+/* =========================================================
+   CARD DETECTION
+========================================================= */
+
+function detectCardLast4(text, fileName = "") {
+  const value = String(text || "")
+    .replace(/\uFEFF/g, "")
+    .replace(/\r/g, " ");
+
+  const source = `${value} ${String(
+    fileName || ""
+  )}`;
 
   const patterns = [
-    /(?:מסתיים|מסתיים ב|סיום|last\s*4|ending)\D{0,20}(\d{4})/i,
-    /(?:כרטיס|card)\D{0,30}(\d{4})/i,
+    /מסתיים\s*ב?\s*[-–—:]?\s*(\d{4})/i,
+    /(?:last\s*4|ending)\D{0,20}(\d{4})/i,
+    /(?:FLYCARD|כרטיס|card)\D{0,40}(\d{4})/i,
   ];
 
   for (const pattern of patterns) {
-    const match = value.match(pattern);
+    const match = source.match(pattern);
 
     if (match?.[1]) {
       return match[1];
     }
   }
 
+  /*
+    Fallback:
+    Look for a four digit sequence in the filename,
+    but only when the filename strongly looks like
+    a credit-card export.
+  */
+  const fileText = String(
+    fileName || ""
+  );
+
+  if (
+    /csv|אשראי|כרטיס|card|isracard|flycard|cal/i.test(
+      fileText
+    )
+  ) {
+    const fileMatch =
+      fileText.match(
+        /(?:^|[^\d])(\d{4})(?:[^\d]|$)/
+      );
+
+    if (fileMatch?.[1]) {
+      return fileMatch[1];
+    }
+  }
+
   return "";
 }
 
-function detectProviderFromFile(text) {
-  return normalizeProvider(text);
+function detectProviderFromFile(text, fileName = "") {
+  return normalizeProvider(
+    `${text || ""} ${fileName || ""}`
+  );
 }
 
-/*
-  CSV parser that handles:
-  - commas
-  - semicolons
-  - quoted cells
-  - quoted Hebrew text
-  - line breaks inside quoted cells
-*/
+/* =========================================================
+   CSV
+========================================================= */
+
 function parseCSV(text) {
   const input = String(text || "").replace(
     /^\uFEFF/,
@@ -378,6 +414,10 @@ function findHeaderIndex(headers, variants) {
   return -1;
 }
 
+/* =========================================================
+   CATEGORY GUESS
+========================================================= */
+
 function guessCategoryName(
   merchant,
   branch,
@@ -489,6 +529,10 @@ function findCategoryIdByName(
   return exact?.id || "";
 }
 
+/* =========================================================
+   RECURRING DETECTION
+========================================================= */
+
 function looksLikeRecurring(row) {
   const type = normalizeText(
     row.transactionType
@@ -505,14 +549,18 @@ function looksLikeRecurring(row) {
   );
 }
 
+/* =========================================================
+   IMPORT KEY
+========================================================= */
+
 function makeImportKey(row) {
   return [
     row.credit_card_provider || "",
     row.credit_card_last4 || "",
     row.transaction_date || "",
-    Number(row.actual_amount || 0).toFixed(
-      2
-    ),
+    Number(
+      row.actual_amount || 0
+    ).toFixed(2),
     normalizeText(
       row.merchant ||
         row.description
@@ -520,17 +568,15 @@ function makeImportKey(row) {
   ].join("|");
 }
 
-/*
-  Converts a provider CSV into our internal preview format.
-  The Isracard export supplied by Hani has:
-  row 0 = account/card information
-  row 2 = billing summary
-  row 3 = headers
-*/
+/* =========================================================
+   CREDIT FILE PARSER
+========================================================= */
+
 function parseCreditFile(
   text,
   categories,
-  forcedProvider = ""
+  forcedProvider = "",
+  fileName = ""
 ) {
   const rows = parseCSV(text);
 
@@ -547,17 +593,21 @@ function parseCreditFile(
   const provider =
     forcedProvider ||
     detectProviderFromFile(
-      fullText
+      fullText,
+      fileName
     );
 
   const cardLast4 =
-    detectCardLast4(fullText);
+    detectCardLast4(
+      fullText,
+      fileName
+    );
 
   let headerRowIndex = -1;
 
   for (
     let i = 0;
-    i < Math.min(rows.length, 30);
+    i < Math.min(rows.length, 50);
     i++
   ) {
     const joined = rows[i]
@@ -565,17 +615,17 @@ function parseCreditFile(
       .join(" | ");
 
     const hasDate =
-      /תאריך.*עסקה|date.*transaction|transaction.*date|תאריך/.test(
+      /תאריך.*עסקה|תאריך.*רכישה|date.*transaction|transaction.*date|purchase.*date|תאריך/.test(
         joined
       );
 
     const hasMerchant =
-      /שם.*בית עסק|בית עסק|merchant|description|פירוט/.test(
+      /שם.*בית עסק|בית עסק|merchant|description|פירוט|שם העסק/.test(
         joined
       );
 
     const hasAmount =
-      /סכום.*עסקה|סכום.*חיוב|amount|charge/.test(
+      /סכום.*עסקה|סכום.*רכישה|סכום.*חיוב|amount|charge|purchase amount/.test(
         joined
       );
 
@@ -594,15 +644,19 @@ function parseCreditFile(
     );
   }
 
-  const headers = rows[
-    headerRowIndex
-  ].map(normalizeText);
+  const headers =
+    rows[headerRowIndex].map(
+      normalizeText
+    );
 
   const dateIndex =
     findHeaderIndex(headers, [
       "תאריך עסקה",
       "תאריך\nעסקה",
+      "תאריך רכישה",
+      "תאריך\nרכישה",
       "transaction date",
+      "purchase date",
       "date",
       "תאריך",
     ]);
@@ -614,6 +668,7 @@ function parseCreditFile(
       "merchant",
       "description",
       "שם העסק",
+      "שם בית העסק",
       "פירוט",
     ]);
 
@@ -621,16 +676,20 @@ function parseCreditFile(
     findHeaderIndex(headers, [
       "סכום חיוב",
       "סכום\nחיוב",
+      "סכום חיוב בשח",
+      "סכום חיוב בש\"ח",
       "charge amount",
       "charged amount",
       "amount charged",
-      "סכום חיוב בשח",
+      "חיוב",
     ]);
 
   const purchaseIndex =
     findHeaderIndex(headers, [
       "סכום עסקה",
       "סכום\nעסקה",
+      "סכום רכישה",
+      "סכום\nרכישה",
       "transaction amount",
       "purchase amount",
       "amount",
@@ -663,7 +722,7 @@ function parseCreditFile(
 
   if (dateIndex < 0) {
     throw new Error(
-      "לא נמצא עמודת תאריך עסקה."
+      "לא נמצאה עמודת תאריך עסקה / תאריך רכישה."
     );
   }
 
@@ -710,9 +769,12 @@ function parseCreditFile(
     }
 
     /*
-      Critical:
-      For credit files we use the CHARGE amount,
-      not the purchase amount.
+      IMPORTANT:
+      The actual amount is always the charge amount
+      when that column exists.
+      
+      Only if there is no charge column at all,
+      use purchase amount.
     */
     const chargeAmount =
       chargeIndex >= 0
@@ -728,21 +790,21 @@ function parseCreditFile(
           )
         : null;
 
-    /*
-      Empty "סכום חיוב" rows are not imported.
-      This prevents summary/metadata lines and
-      incomplete installments from becoming transactions.
-    */
+    const actualAmount =
+      chargeIndex >= 0
+        ? chargeAmount
+        : purchaseAmount;
+
     if (
-      chargeAmount === null ||
+      actualAmount === null ||
       !Number.isFinite(
-        chargeAmount
+        actualAmount
       )
     ) {
       continue;
     }
 
-    if (chargeAmount === 0) {
+    if (actualAmount === 0) {
       continue;
     }
 
@@ -793,7 +855,8 @@ function parseCreditFile(
         .toString(36)
         .slice(2)}`,
 
-      description: merchant,
+      description:
+        merchant,
 
       merchant,
 
@@ -807,12 +870,19 @@ function parseCreditFile(
         transactionDate,
 
       actual_amount:
-        chargeAmount,
+        actualAmount,
 
+      /*
+        Variable = actual only.
+        Fixed = planned + actual.
+        
+        The DB still receives actual in planned_amount
+        for compatibility with the existing schema,
+        but the UI does not display it as planned
+        for variable expenses.
+      */
       planned_amount:
-        recurringFlag
-          ? chargeAmount
-          : chargeAmount,
+        actualAmount,
 
       expense_type:
         recurringFlag
@@ -841,13 +911,18 @@ function parseCreditFile(
         makeImportKey({
           credit_card_provider:
             provider,
+
           credit_card_last4:
             cardLast4,
+
           transaction_date:
             transactionDate,
+
           actual_amount:
-            chargeAmount,
+            actualAmount,
+
           merchant,
+
           description:
             merchant,
         }),
@@ -867,6 +942,7 @@ function parseCreditFile(
 
 export default function BudgetApp() {
   const [user, setUser] = useState(null);
+
   const [household, setHousehold] =
     useState(null);
 
@@ -930,6 +1006,7 @@ export default function BudgetApp() {
     useState(null);
 
   /* Credit import state */
+
   const [
     importFile,
     setImportFile,
@@ -1423,14 +1500,6 @@ export default function BudgetApp() {
       transaction_date:
         form.transaction_date,
 
-      /*
-        Variable expenses:
-        actual only.
-        We retain planned_amount = actual
-        because the existing database/app structure
-        expects a value there, but the UI never treats
-        it as a planned variable expense.
-      */
       planned_amount:
         kind === "expense" &&
         form.expense_type ===
@@ -2089,19 +2158,23 @@ export default function BudgetApp() {
 
       let detectedProvider =
         detectProviderFromFile(
-          text
+          text,
+          file.name
         );
 
       if (!detectedProvider) {
         detectedProvider =
-          importProvider;
+          normalizeProvider(
+            importProvider
+          );
       }
 
       const parsed =
         parseCreditFile(
           text,
           categories,
-          detectedProvider
+          detectedProvider,
+          file.name
         );
 
       if (
@@ -2120,18 +2193,23 @@ export default function BudgetApp() {
                 credit_card_provider:
                   tx.credit_card_provider ||
                   "",
+
                 credit_card_last4:
                   tx.credit_card_last4 ||
                   "",
+
                 transaction_date:
                   tx.transaction_date ||
                   "",
+
                 actual_amount:
                   tx.actual_amount ||
                   0,
+
                 merchant:
                   tx.merchant ||
                   "",
+
                 description:
                   tx.description ||
                   "",
@@ -2143,10 +2221,12 @@ export default function BudgetApp() {
         parsed.rows.map(
           (row) => ({
             ...row,
+
             duplicate:
               existingKeys.has(
                 row.importKey
               ),
+
             selected:
               !existingKeys.has(
                 row.importKey
@@ -2164,23 +2244,29 @@ export default function BudgetApp() {
       );
 
       setImportFile(file);
+
       setImportProvider(
         parsed.provider
       );
 
       setImportFileInfo({
         name: file.name,
+
         provider:
           parsed.provider,
+
         cardLast4:
           parsed.cardLast4,
+
         total:
           enriched.length,
+
         duplicates:
           enriched.filter(
             (r) =>
               r.duplicate
           ).length,
+
         amount:
           enriched.reduce(
             (sum, r) =>
@@ -2218,9 +2304,6 @@ export default function BudgetApp() {
     } finally {
       setImportLoading(false);
 
-      /*
-        Allows selecting the same file again.
-      */
       event.target.value = "";
     }
   }
@@ -2335,12 +2418,6 @@ export default function BudgetApp() {
     setImportSaving(true);
 
     try {
-      /*
-        Refresh immediately before inserting.
-        This protects against importing a transaction
-        that was added by another session after the
-        preview was created.
-      */
       const {
         data: latest,
         error:
@@ -2370,18 +2447,23 @@ export default function BudgetApp() {
                 credit_card_provider:
                   tx.credit_card_provider ||
                   "",
+
                 credit_card_last4:
                   tx.credit_card_last4 ||
                   "",
+
                 transaction_date:
                   tx.transaction_date ||
                   "",
+
                 actual_amount:
                   tx.actual_amount ||
                   0,
+
                 merchant:
                   tx.merchant ||
                   "",
+
                 description:
                   tx.description ||
                   "",
@@ -2418,13 +2500,6 @@ export default function BudgetApp() {
               transaction_date:
                 row.transaction_date,
 
-              /*
-                For imported credit transactions,
-                the charge amount is actual.
-                Variable expenses have no UI planned value.
-                The DB receives the actual value in planned_amount
-                to remain compatible with the current schema.
-              */
               planned_amount:
                 row.actual_amount,
 
@@ -2444,12 +2519,15 @@ export default function BudgetApp() {
               note:
                 [
                   row.notes,
+
                   row.transactionType
                     ? `סוג: ${row.transactionType}`
                     : "",
+
                   row.branch
                     ? `ענף: ${row.branch}`
                     : "",
+
                   "יובא מקובץ אשראי",
                 ]
                   .filter(Boolean)
@@ -2485,12 +2563,6 @@ export default function BudgetApp() {
         return;
       }
 
-      /*
-        Insert in one operation.
-        The unique recurring transaction mechanism
-        is not used here because credit imports are
-        regular transaction imports.
-      */
       const {
         error,
       } =
@@ -3767,37 +3839,14 @@ export default function BudgetApp() {
                 <table className="transactions-table import-table">
                   <thead>
                     <tr>
-                      <th>
-                        ✓
-                      </th>
-
-                      <th>
-                        תאריך
-                      </th>
-
-                      <th>
-                        בית עסק
-                      </th>
-
-                      <th>
-                        סכום בפועל
-                      </th>
-
-                      <th>
-                        קטגוריה
-                      </th>
-
-                      <th>
-                        סוג
-                      </th>
-
-                      <th>
-                        כרטיס
-                      </th>
-
-                      <th>
-                        סטטוס
-                      </th>
+                      <th>✓</th>
+                      <th>תאריך</th>
+                      <th>בית עסק</th>
+                      <th>סכום בפועל</th>
+                      <th>קטגוריה</th>
+                      <th>סוג</th>
+                      <th>כרטיס</th>
+                      <th>סטטוס</th>
                     </tr>
                   </thead>
 
@@ -4966,34 +5015,13 @@ function TransactionTable({
       <table className="transactions-table">
         <thead>
           <tr>
-            <th>
-              תאריך
-            </th>
-
-            <th>
-              תיאור
-            </th>
-
-            <th>
-              קטגוריה
-            </th>
-
-            <th>
-              סוג
-            </th>
-
-            <th>
-              מתוכנן
-            </th>
-
-            <th>
-              בפועל
-            </th>
-
-            <th>
-              מי
-            </th>
-
+            <th>תאריך</th>
+            <th>תיאור</th>
+            <th>קטגוריה</th>
+            <th>סוג</th>
+            <th>מתוכנן</th>
+            <th>בפועל</th>
+            <th>מי</th>
             <th></th>
           </tr>
         </thead>
@@ -5203,4 +5231,4 @@ function Modal({
       </div>
     </div>
   );
-}
+          }
