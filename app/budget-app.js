@@ -536,8 +536,9 @@ export default function BudgetApp() {
       return;
     }
 
-    const row = {
-      household_id: household.id,
+const row = {
+  household_id: household.id,
+  created_by: user?.id || null,
       kind,
       description,
       category_id:
