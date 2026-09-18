@@ -666,3 +666,253 @@ textarea:focus {
     grid-column: 1 / -1;
   }
 }
+/* ===== FINAL MOBILE LAYOUT FIX ===== */
+
+@media (max-width: 900px) {
+
+  /* תפריט הלשוניות */
+  .tabs {
+    width: 100%;
+    display: flex;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding: 4px 0 12px;
+    gap: 4px;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex: 0 0 auto;
+    font-size: 16px;
+    padding: 10px 12px;
+  }
+
+  /* טבלאות הוצאות והכנסות הופכות לכרטיסים */
+  .table-wrap {
+    width: 100%;
+    overflow: visible;
+  }
+
+  .transactions-table {
+    width: 100%;
+    min-width: 0 !important;
+    display: block;
+    border-collapse: separate;
+  }
+
+  .transactions-table thead {
+    display: none;
+  }
+
+  .transactions-table tbody {
+    display: grid;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .transactions-table tbody tr {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    background: #fff;
+    border: 1px solid #e4e8f0;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  .transactions-table tbody td {
+    display: block;
+    width: 100%;
+    min-width: 0 !important;
+    padding: 10px 12px;
+    border-bottom: 1px solid #edf0f4;
+    text-align: right;
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .transactions-table tbody td::before {
+    display: block;
+    margin-bottom: 4px;
+    color: #8a93a3;
+    font-size: 10px;
+    font-weight: 700;
+  }
+
+  .transactions-table tbody td:nth-child(1)::before {
+    content: "תאריך";
+  }
+
+  .transactions-table tbody td:nth-child(2)::before {
+    content: "תיאור";
+  }
+
+  .transactions-table tbody td:nth-child(3)::before {
+    content: "קטגוריה";
+  }
+
+  .transactions-table tbody td:nth-child(4)::before {
+    content: "סוג";
+  }
+
+  .transactions-table tbody td:nth-child(5)::before {
+    content: "מתוכנן";
+  }
+
+  .transactions-table tbody td:nth-child(6)::before {
+    content: "בפועל";
+  }
+
+  .transactions-table tbody td:nth-child(7)::before {
+    content: "מי";
+  }
+
+  .transactions-table tbody td:nth-child(8)::before {
+    content: "פעולות";
+  }
+
+  /* התיאור מקבל שורה שלמה */
+  .transactions-table tbody td:nth-child(2) {
+    grid-column: 1 / -1;
+  }
+
+  /* פעולות מקבלות שורה שלמה */
+  .transactions-table tbody td:nth-child(8) {
+    grid-column: 1 / -1;
+    border-bottom: 0;
+  }
+
+  .transactions-table tbody td:nth-child(6),
+  .transactions-table tbody td:nth-child(7) {
+    border-bottom: 0;
+  }
+
+  .transactions-table tbody td:nth-child(2) {
+    font-size: 15px;
+  }
+
+  .transactions-table tbody td strong {
+    overflow-wrap: anywhere;
+  }
+
+  .transactions-table .table-sub {
+    margin-top: 3px;
+    font-size: 11px;
+    color: #858e9d;
+  }
+
+  .transactions-table .badge {
+    display: inline-flex;
+  }
+
+  .transactions-table .table-actions {
+    justify-content: flex-start;
+  }
+
+  /* כותרת הלשונית */
+  .panel-head {
+    align-items: flex-start;
+  }
+
+  .panel-head .primary {
+    flex-shrink: 0;
+  }
+
+  /* כרטיסי הסיכום */
+  .cards {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* גרפים */
+  .chart-row {
+    grid-template-columns: 85px minmax(0, 1fr) auto;
+  }
+
+  /* הוצאות קבועות */
+  .fixed-card {
+    display: grid;
+    grid-template-columns: 1fr auto;
+  }
+
+  .fixed-main {
+    min-width: 0;
+  }
+
+  .amounts {
+    grid-column: 1 / -1;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .row-actions {
+    justify-content: flex-end;
+  }
+}
+
+@media (max-width: 600px) {
+
+  .app {
+    padding: 10px;
+  }
+
+  .topbar {
+    gap: 8px;
+  }
+
+  .topbar h1 {
+    font-size: 20px;
+  }
+
+  .page-title h2 {
+    font-size: 20px;
+  }
+
+  .page-title .primary {
+    padding: 9px 11px;
+    font-size: 13px;
+  }
+
+  .cards {
+    gap: 8px;
+  }
+
+  .stat {
+    padding: 11px;
+  }
+
+  .stat strong {
+    font-size: 17px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .panel-head h2 {
+    font-size: 19px;
+  }
+
+  .chart-row {
+    grid-template-columns: 75px minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .chart-label {
+    font-size: 11px;
+  }
+
+  .chart-row strong {
+    font-size: 11px;
+  }
+
+  .transactions-table tbody tr {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .transactions-table tbody td {
+    padding: 9px 10px;
+  }
+}
