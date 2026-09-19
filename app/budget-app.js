@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createClient } from "@supabase/supabase-js";
 
 const supabase = createClient(
@@ -103,21 +103,34 @@ function normalizeDate(value) {
   const text = normalizeText(value);
   if (!text) return "";
 
-  let match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
+  let match = text.match(
+    /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/
+  );
 
   if (match) {
     let [, day, month, year] = match;
-    if (year.length === 2) year = `20${year}`;
 
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    if (year.length === 2) {
+      year = `20${year}`;
+    }
+
+    return `${year}-${String(month).padStart(
+      2,
+      "0"
+    )}-${String(day).padStart(2, "0")}`;
   }
 
-  match = text.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/);
+  match = text.match(
+    /^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/
+  );
 
   if (match) {
     const [, year, month, day] = match;
 
-    return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    return `${year}-${String(month).padStart(
+      2,
+      "0"
+    )}-${String(day).padStart(2, "0")}`;
   }
 
   return "";
@@ -184,24 +197,35 @@ function detectCardLast4(text, fileName = "") {
 
   for (const pattern of patterns) {
     const match = source.match(pattern);
-    if (match?.[1]) return match[1];
+
+    if (match?.[1]) {
+      return match[1];
+    }
   }
 
   const fileText = String(fileName || "");
 
-  if (/csv|אשראי|כרטיס|card|isracard|flycard|cal/i.test(fileText)) {
+  if (
+    /csv|אשראי|כרטיס|card|isracard|flycard|cal/i.test(
+      fileText
+    )
+  ) {
     const fileMatch = fileText.match(
       /(?:^|[^\d])(\d{4})(?:[^\d]|$)/
     );
 
-    if (fileMatch?.[1]) return fileMatch[1];
+    if (fileMatch?.[1]) {
+      return fileMatch[1];
+    }
   }
 
   return "";
 }
 
 function detectProviderFromFile(text, fileName = "") {
-  return normalizeProvider(`${text || ""} ${fileName || ""}`);
+  return normalizeProvider(
+    `${text || ""} ${fileName || ""}`
+  );
 }
 
 /* =========================================================
@@ -214,18 +238,35 @@ function detectDelimiter(text) {
     .slice(0, 10)
     .join("\n");
 
-  const commaCount = (firstLines.match(/,/g) || []).length;
-  const semicolonCount = (firstLines.match(/;/g) || []).length;
-  const tabCount = (firstLines.match(/\t/g) || []).length;
+  const commaCount =
+    (firstLines.match(/,/g) || []).length;
 
-  if (tabCount > commaCount && tabCount > semicolonCount) return "\t";
-  if (semicolonCount > commaCount) return ";";
+  const semicolonCount =
+    (firstLines.match(/;/g) || []).length;
+
+  const tabCount =
+    (firstLines.match(/\t/g) || []).length;
+
+  if (
+    tabCount > commaCount &&
+    tabCount > semicolonCount
+  ) {
+    return "\t";
+  }
+
+  if (semicolonCount > commaCount) {
+    return ";";
+  }
 
   return ",";
 }
 
 function parseCSV(text) {
-  const input = String(text || "").replace(/^\uFEFF/, "");
+  const input = String(text || "").replace(
+    /^\uFEFF/,
+    ""
+  );
+
   const delimiter = detectDelimiter(input);
 
   const rows = [];
@@ -247,6 +288,7 @@ function parseCSV(text) {
       } else {
         cell += char;
       }
+
       continue;
     }
 
@@ -270,7 +312,9 @@ function parseCSV(text) {
     }
 
     if (char === "\r") {
-      if (input[i + 1] === "\n") i++;
+      if (input[i + 1] === "\n") {
+        i++;
+      }
 
       row.push(cell);
       rows.push(row);
@@ -288,7 +332,9 @@ function parseCSV(text) {
   }
 
   return rows.filter((r) =>
-    r.some((c) => String(c || "").trim() !== "")
+    r.some(
+      (c) => String(c || "").trim() !== ""
+    )
   );
 }
 
@@ -301,18 +347,26 @@ function normalizeHeader(header) {
 
 function findHeaderIndex(headers, variants) {
   for (const variant of variants) {
-    const normalizedVariant = normalizeHeader(variant);
+    const normalizedVariant =
+      normalizeHeader(variant);
 
-    const index = headers.findIndex((header) => {
-      const normalized = normalizeHeader(header);
+    const index = headers.findIndex(
+      (header) => {
+        const normalized =
+          normalizeHeader(header);
 
-      return (
-        normalized === normalizedVariant ||
-        normalized.includes(normalizedVariant)
-      );
-    });
+        return (
+          normalized === normalizedVariant ||
+          normalized.includes(
+            normalizedVariant
+          )
+        );
+      }
+    );
 
-    if (index >= 0) return index;
+    if (index >= 0) {
+      return index;
+    }
   }
 
   return -1;
@@ -322,7 +376,11 @@ function findHeaderIndex(headers, variants) {
    CATEGORIES / CREDIT IMPORT
 ========================================================= */
 
-function guessCategoryName(merchant, branch, description) {
+function guessCategoryName(
+  merchant,
+  branch,
+  description
+) {
   const text =
     `${merchant} ${branch} ${description}`.toLowerCase();
 
@@ -398,26 +456,38 @@ function guessCategoryName(merchant, branch, description) {
     return "בית";
   }
 
-  if (/אמזון|amazon|פיס|בילוי|פנאי/i.test(text)) {
+  if (
+    /אמזון|amazon|פיס|בילוי|פנאי/i.test(
+      text
+    )
+  ) {
     return "בילויים";
   }
 
   return "אחר";
 }
 
-function findCategoryIdByName(categories, name) {
-  const normalized = normalizeText(name).toLowerCase();
+function findCategoryIdByName(
+  categories,
+  name
+) {
+  const normalized =
+    normalizeText(name).toLowerCase();
 
   const exact = categories.find(
     (category) =>
-      normalizeText(category.name).toLowerCase() === normalized
+      normalizeText(
+        category.name
+      ).toLowerCase() === normalized
   );
 
   return exact?.id || "";
 }
 
 function looksLikeRecurring(row) {
-  const type = normalizeText(row.transactionType);
+  const type = normalizeText(
+    row.transactionType
+  );
 
   const text =
     `${row.merchant} ${row.description} ${row.branch} ${type}`.toLowerCase();
@@ -425,7 +495,8 @@ function looksLikeRecurring(row) {
   return (
     /הוראת קבע|חיוב חודשי|קבוע|recurring|standing order|direct debit/.test(
       text
-    ) || type.includes("הוראת קבע")
+    ) ||
+    type.includes("הוראת קבע")
   );
 }
 
@@ -434,8 +505,12 @@ function makeImportKey(row) {
     row.credit_card_provider || "",
     row.credit_card_last4 || "",
     row.transaction_date || "",
-    Number(row.actual_amount || 0).toFixed(2),
-    normalizeText(row.merchant || row.description).toLowerCase(),
+    Number(
+      row.actual_amount || 0
+    ).toFixed(2),
+    normalizeText(
+      row.merchant || row.description
+    ).toLowerCase(),
   ].join("|");
 }
 
@@ -448,20 +523,38 @@ function parseCreditFile(
   const rows = parseCSV(text);
 
   if (!rows.length) {
-    throw new Error("הקובץ ריק או שלא ניתן לקרוא אותו.");
+    throw new Error(
+      "הקובץ ריק או שלא ניתן לקרוא אותו."
+    );
   }
 
-  const fullText = rows.map((row) => row.join(" ")).join("\n");
+  const fullText = rows
+    .map((row) => row.join(" "))
+    .join("\n");
 
   const provider =
-    forcedProvider || detectProviderFromFile(fullText, fileName);
+    forcedProvider ||
+    detectProviderFromFile(
+      fullText,
+      fileName
+    );
 
-  const cardLast4 = detectCardLast4(fullText, fileName);
+  const cardLast4 =
+    detectCardLast4(
+      fullText,
+      fileName
+    );
 
   let headerRowIndex = -1;
 
-  for (let i = 0; i < Math.min(rows.length, 50); i++) {
-    const joined = rows[i].map(normalizeHeader).join(" | ");
+  for (
+    let i = 0;
+    i < Math.min(rows.length, 50);
+    i++
+  ) {
+    const joined = rows[i]
+      .map(normalizeHeader)
+      .join(" | ");
 
     const hasDate =
       /תאריך.*עסקה|תאריך.*רכישה|date.*transaction|transaction.*date|purchase.*date|תאריך/.test(
@@ -478,113 +571,151 @@ function parseCreditFile(
         joined
       );
 
-    if ((hasDate && hasMerchant) || (hasDate && hasAmount)) {
+    if (
+      (hasDate && hasMerchant) ||
+      (hasDate && hasAmount)
+    ) {
       headerRowIndex = i;
       break;
     }
   }
 
   if (headerRowIndex < 0) {
-    throw new Error("לא הצלחתי לזהות את שורת הכותרות בקובץ.");
+    throw new Error(
+      "לא הצלחתי לזהות את שורת הכותרות בקובץ."
+    );
   }
 
-  const headers = rows[headerRowIndex].map(normalizeText);
+  const headers =
+    rows[headerRowIndex].map(
+      normalizeText
+    );
 
-  const dateIndex = findHeaderIndex(headers, [
-    "תאריך עסקה",
-    "תאריך\nעסקה",
-    "תאריך רכישה",
-    "תאריך\nרכישה",
-    "transaction date",
-    "purchase date",
-    "date",
-    "תאריך",
-  ]);
+  const dateIndex =
+    findHeaderIndex(headers, [
+      "תאריך עסקה",
+      "תאריך\nעסקה",
+      "תאריך רכישה",
+      "תאריך\nרכישה",
+      "transaction date",
+      "purchase date",
+      "date",
+      "תאריך",
+    ]);
 
-  const merchantIndex = findHeaderIndex(headers, [
-    "שם בית עסק",
-    "בית עסק",
-    "merchant",
-    "description",
-    "שם העסק",
-    "שם בית העסק",
-    "פירוט",
-  ]);
+  const merchantIndex =
+    findHeaderIndex(headers, [
+      "שם בית עסק",
+      "בית עסק",
+      "merchant",
+      "description",
+      "שם העסק",
+      "שם בית העסק",
+      "פירוט",
+    ]);
 
-  const chargeIndex = findHeaderIndex(headers, [
-    "סכום חיוב",
-    "סכום\nחיוב",
-    "סכום חיוב בשח",
-    'סכום חיוב בש"ח',
-    "charge amount",
-    "charged amount",
-    "amount charged",
-    "חיוב",
-  ]);
+  const chargeIndex =
+    findHeaderIndex(headers, [
+      "סכום חיוב",
+      "סכום\nחיוב",
+      "סכום חיוב בשח",
+      'סכום חיוב בש"ח',
+      "charge amount",
+      "charged amount",
+      "amount charged",
+      "חיוב",
+    ]);
 
-  const purchaseIndex = findHeaderIndex(headers, [
-    "סכום עסקה",
-    "סכום\nעסקה",
-    "סכום רכישה",
-    "סכום\nרכישה",
-    "transaction amount",
-    "purchase amount",
-    "amount",
-    "סכום",
-  ]);
+  const purchaseIndex =
+    findHeaderIndex(headers, [
+      "סכום עסקה",
+      "סכום\nעסקה",
+      "סכום רכישה",
+      "סכום\nרכישה",
+      "transaction amount",
+      "purchase amount",
+      "amount",
+      "סכום",
+    ]);
 
-  const typeIndex = findHeaderIndex(headers, [
-    "סוג עסקה",
-    "סוג\nעסקה",
-    "transaction type",
-    "type",
-  ]);
+  const typeIndex =
+    findHeaderIndex(headers, [
+      "סוג עסקה",
+      "סוג\nעסקה",
+      "transaction type",
+      "type",
+    ]);
 
-  const branchIndex = findHeaderIndex(headers, [
-    "ענף",
-    "branch",
-    "category",
-    "תחום",
-  ]);
+  const branchIndex =
+    findHeaderIndex(headers, [
+      "ענף",
+      "branch",
+      "category",
+      "תחום",
+    ]);
 
-  const notesIndex = findHeaderIndex(headers, [
-    "הערות",
-    "note",
-    "notes",
-    "remarks",
-  ]);
+  const notesIndex =
+    findHeaderIndex(headers, [
+      "הערות",
+      "note",
+      "notes",
+      "remarks",
+    ]);
 
   if (dateIndex < 0) {
-    throw new Error("לא נמצאה עמודת תאריך עסקה / תאריך רכישה.");
+    throw new Error(
+      "לא נמצאה עמודת תאריך עסקה / תאריך רכישה."
+    );
   }
 
   if (merchantIndex < 0) {
-    throw new Error("לא נמצאה עמודת בית עסק.");
+    throw new Error(
+      "לא נמצאה עמודת בית עסק."
+    );
   }
 
-  if (chargeIndex < 0 && purchaseIndex < 0) {
-    throw new Error("לא נמצאה עמודת סכום.");
+  if (
+    chargeIndex < 0 &&
+    purchaseIndex < 0
+  ) {
+    throw new Error(
+      "לא נמצאה עמודת סכום."
+    );
   }
 
   const result = [];
 
-  for (let i = headerRowIndex + 1; i < rows.length; i++) {
+  for (
+    let i = headerRowIndex + 1;
+    i < rows.length;
+    i++
+  ) {
     const row = rows[i];
 
-    const transactionDate = normalizeDate(row[dateIndex]);
+    const transactionDate =
+      normalizeDate(row[dateIndex]);
+
     if (!transactionDate) continue;
 
-    const merchant = normalizeText(row[merchantIndex]);
+    const merchant =
+      normalizeText(row[merchantIndex]);
+
     if (!merchant) continue;
 
     const chargeAmount =
-      chargeIndex >= 0 ? cleanAmount(row[chargeIndex]) : null;
+      chargeIndex >= 0
+        ? cleanAmount(row[chargeIndex])
+        : null;
 
     const purchaseAmount =
-      purchaseIndex >= 0 ? cleanAmount(row[purchaseIndex]) : null;
+      purchaseIndex >= 0
+        ? cleanAmount(row[purchaseIndex])
+        : null;
 
     const actualAmount =
-      chargeIndex >= 0 ? chargeAmount : purchaseAmount;
+      chargeIndex >= 0
+        ? chargeAmount
+        : purchaseAmount;
 
     if (
       actualAmount === null ||
@@ -595,54 +726,78 @@ function parseCreditFile(
     }
 
     const transactionType =
-      typeIndex >= 0 ? normalizeText(row[typeIndex]) : "";
+      typeIndex >= 0
+        ? normalizeText(row[typeIndex])
+        : "";
 
     const branch =
-      branchIndex >= 0 ? normalizeText(row[branchIndex]) : "";
+      branchIndex >= 0
+        ? normalizeText(row[branchIndex])
+        : "";
 
     const notes =
-      notesIndex >= 0 ? normalizeText(row[notesIndex]) : "";
+      notesIndex >= 0
+        ? normalizeText(row[notesIndex])
+        : "";
 
-    const categoryName = guessCategoryName(
-      merchant,
-      branch,
-      notes
-    );
+    const categoryName =
+      guessCategoryName(
+        merchant,
+        branch,
+        notes
+      );
 
-    const categoryId = findCategoryIdByName(
-      categories,
-      categoryName
-    );
+    const categoryId =
+      findCategoryIdByName(
+        categories,
+        categoryName
+      );
 
-    const recurringFlag = looksLikeRecurring({
-      merchant,
-      description: merchant,
-      branch,
-      transactionType,
-    });
+    const recurringFlag =
+      looksLikeRecurring({
+        merchant,
+        description: merchant,
+        branch,
+        transactionType,
+      });
 
     const baseRow = {
       description: merchant,
       merchant,
-      category_id: categoryId || "",
-      category_name: categoryName,
-      transaction_date: transactionDate,
-      actual_amount: actualAmount,
-      planned_amount: actualAmount,
-      expense_type: recurringFlag ? "fixed" : "variable",
+      category_id:
+        categoryId || "",
+      category_name:
+        categoryName,
+      transaction_date:
+        transactionDate,
+      actual_amount:
+        actualAmount,
+      planned_amount:
+        actualAmount,
+      expense_type:
+        recurringFlag
+          ? "fixed"
+          : "variable",
       transactionType,
       branch,
       notes,
-      payment_method: "credit_card",
-      credit_card_provider: provider,
-      credit_card_last4: cardLast4,
-      recurringCandidate: recurringFlag,
+      payment_method:
+        "credit_card",
+      credit_card_provider:
+        provider,
+      credit_card_last4:
+        cardLast4,
+      recurringCandidate:
+        recurringFlag,
     };
 
     result.push({
-      id: `import-${i}-${Math.random().toString(36).slice(2)}`,
+      id: `import-${i}-${Math.random()
+        .toString(36)
+        .slice(2)}`,
       ...baseRow,
-      importKey: makeImportKey(baseRow),
+      importKey:
+        makeImportKey(baseRow),
     });
   }
 
@@ -658,50 +813,148 @@ function parseCreditFile(
 ========================================================= */
 
 export default function BudgetApp() {
-  const [user, setUser] = useState(null);
-  const [household, setHousehold] = useState(null);
-  const [profiles, setProfiles] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [recurring, setRecurring] = useState([]);
+  const [user, setUser] =
+    useState(null);
 
-  const [month, setMonth] = useState(monthKey());
-  const [tab, setTab] = useState("dashboard");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [household, setHousehold] =
+    useState(null);
 
-  const [modal, setModal] = useState(null);
-  const [editingTx, setEditingTx] = useState(null);
-  const [editingRecurring, setEditingRecurring] = useState(null);
-  const [detailsTx, setDetailsTx] = useState(null);
+  const [profiles, setProfiles] =
+    useState([]);
 
-  const [txForm, setTxForm] = useState(emptyTx());
-  const [recForm, setRecForm] = useState(emptyRecurring());
+  const [categories, setCategories] =
+    useState([]);
 
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
+  const [transactions, setTransactions] =
+    useState([]);
 
-  const [newCategory, setNewCategory] = useState("");
-  const [editingCategory, setEditingCategory] = useState(null);
-  const [categoryNameForm, setCategoryNameForm] = useState("");
+  const [recurring, setRecurring] =
+    useState([]);
 
-  const [confirm, setConfirm] = useState(null);
+  const [month, setMonth] =
+    useState(monthKey());
+
+  const [tab, setTab] =
+    useState("dashboard");
+
+  const [loading, setLoading] =
+    useState(true);
+
+  const [saving, setSaving] =
+    useState(false);
+
+  const [error, setError] =
+    useState("");
+
+  const [modal, setModal] =
+    useState(null);
+
+  const [editingTx, setEditingTx] =
+    useState(null);
+
+  const [
+    editingRecurring,
+    setEditingRecurring,
+  ] = useState(null);
+
+  const [detailsTx, setDetailsTx] =
+    useState(null);
+
+  const [txForm, setTxForm] =
+    useState(emptyTx());
+
+  const [recForm, setRecForm] =
+    useState(emptyRecurring());
+
+  const [email, setEmail] =
+    useState("");
+
+  const [password, setPassword] =
+    useState("");
+
+  const [loginError, setLoginError] =
+    useState("");
+
+  const [newCategory, setNewCategory] =
+    useState("");
+
+  const [
+    editingCategory,
+    setEditingCategory,
+  ] = useState(null);
+
+  const [
+    categoryNameForm,
+    setCategoryNameForm,
+  ] = useState("");
+
+  const [confirm, setConfirm] =
+    useState(null);
 
   /* CREDIT IMPORT */
 
-  const [importFile, setImportFile] = useState(null);
-  const [importProvider, setImportProvider] = useState("");
-  const [importPreview, setImportPreview] = useState([]);
-  const [importFileInfo, setImportFileInfo] = useState(null);
-  const [importLoading, setImportLoading] = useState(false);
-  const [importSaving, setImportSaving] = useState(false);
-  const [importMessage, setImportMessage] = useState("");
-  const [importError, setImportError] = useState("");
-  const [importSelected, setImportSelected] = useState({});
-  const [importFromDate, setImportFromDate] = useState("");
-  const [importToDate, setImportToDate] = useState("");
+  const [importFile, setImportFile] =
+    useState(null);
+
+  const [
+    importProvider,
+    setImportProvider,
+  ] = useState("");
+
+  const [
+    importPreview,
+    setImportPreview,
+  ] = useState([]);
+
+  const [
+    importFileInfo,
+    setImportFileInfo,
+  ] = useState(null);
+
+  const [
+    importLoading,
+    setImportLoading,
+  ] = useState(false);
+
+  const [
+    importSaving,
+    setImportSaving,
+  ] = useState(false);
+
+  const [
+    importMessage,
+    setImportMessage,
+  ] = useState("");
+
+  const [
+    importError,
+    setImportError,
+  ] = useState("");
+
+  const [
+    importSelected,
+    setImportSelected,
+  ] = useState({});
+
+  const [
+    importFromDate,
+    setImportFromDate,
+  ] = useState("");
+
+  const [
+    importToDate,
+    setImportToDate,
+  ] = useState("");
+
+  /*
+   * מספר רענון.
+   *
+   * כל קריאה ל-refresh מקבלת מספר.
+   * אם בזמן שהיא טוענת נתונים התחיל refresh חדש יותר,
+   * היא לא מורשית לדרוס את התוצאה החדשה.
+   */
+  const refreshVersionRef =
+    useRef(0);
 
   /* =====================================================
      AUTH
@@ -710,18 +963,28 @@ export default function BudgetApp() {
   useEffect(() => {
     let mounted = true;
 
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (!mounted) return;
 
-      setUser(data.session?.user || null);
-      setLoading(false);
-    });
+        setUser(
+          data.session?.user || null
+        );
+
+        setLoading(false);
+      });
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user || null);
-    });
+    } =
+      supabase.auth.onAuthStateChange(
+        (_event, session) => {
+          setUser(
+            session?.user || null
+          );
+        }
+      );
 
     return () => {
       mounted = false;
@@ -744,13 +1007,32 @@ export default function BudgetApp() {
   async function refresh() {
     if (!user) return;
 
+    const requestVersion =
+      ++refreshVersionRef.current;
+
     setLoading(true);
     setError("");
 
     try {
-      const h = await supabase.rpc("get_my_household");
+      const h =
+        await supabase.rpc(
+          "get_my_household"
+        );
 
-      if (h.error) throw h.error;
+      /*
+       * אם התחיל refresh חדש יותר,
+       * התוצאה הזאת כבר לא רלוונטית.
+       */
+      if (
+        requestVersion !==
+        refreshVersionRef.current
+      ) {
+        return;
+      }
+
+      if (h.error) {
+        throw h.error;
+      }
 
       const hr = h.data?.[0];
 
@@ -759,7 +1041,8 @@ export default function BudgetApp() {
         return;
       }
 
-      const householdId = hr.household_id;
+      const householdId =
+        hr.household_id;
 
       setHousehold({
         id: householdId,
@@ -772,78 +1055,191 @@ export default function BudgetApp() {
         transactionsResult,
         recurringResult,
       ] = await Promise.all([
-        supabase.rpc("get_my_household_members"),
+        supabase.rpc(
+          "get_my_household_members"
+        ),
 
         supabase
           .from("categories")
           .select("*")
-          .eq("household_id", householdId)
+          .eq(
+            "household_id",
+            householdId
+          )
           .order("name"),
 
         supabase
           .from("transactions")
           .select("*")
-          .eq("household_id", householdId)
-          .gte("transaction_date", `${month}-01`)
+          .eq(
+            "household_id",
+            householdId
+          )
+          .gte(
+            "transaction_date",
+            `${month}-01`
+          )
           .lt(
             "transaction_date",
-            `${shiftMonth(month, 1)}-01`
+            `${shiftMonth(
+              month,
+              1
+            )}-01`
           )
-          .order("transaction_date", {
-            ascending: false,
-          })
-          .order("created_at", {
-            ascending: false,
-          }),
+          .order(
+            "transaction_date",
+            {
+              ascending: false,
+            }
+          )
+          .order(
+            "created_at",
+            {
+              ascending: false,
+            }
+          ),
 
         supabase
           .from("recurring_expenses")
           .select("*")
-          .eq("household_id", householdId)
-          .eq("is_active", true)
-          .order("day_of_month")
+          .eq(
+            "household_id",
+            householdId
+          )
+          .eq(
+            "is_active",
+            true
+          )
+          .order(
+            "day_of_month"
+          )
           .order("name"),
       ]);
 
-      if (membersResult.error)
-        console.error("Members:", membersResult.error);
+      /*
+       * refresh חדש יותר כבר הסתיים/התחיל.
+       * לא נותנים לתוצאה הזאת לדרוס אותו.
+       */
+      if (
+        requestVersion !==
+        refreshVersionRef.current
+      ) {
+        return;
+      }
 
-      if (categoriesResult.error)
-        console.error("Categories:", categoriesResult.error);
+      if (membersResult.error) {
+        console.error(
+          "Members:",
+          membersResult.error
+        );
+      }
 
-      if (transactionsResult.error)
-        console.error("Transactions:", transactionsResult.error);
+      if (categoriesResult.error) {
+        console.error(
+          "Categories:",
+          categoriesResult.error
+        );
+      }
 
-      if (recurringResult.error)
-        console.error("Recurring:", recurringResult.error);
+      if (transactionsResult.error) {
+        console.error(
+          "Transactions:",
+          transactionsResult.error
+        );
+      }
 
-      setProfiles(
-        (membersResult.data || []).map((member) => ({
-          id: member.user_id,
-          display_name: member.display_name || "ללא שם",
-          role: member.role,
-        }))
+      if (recurringResult.error) {
+        console.error(
+          "Recurring:",
+          recurringResult.error
+        );
+      }
+
+      if (!membersResult.error) {
+        setProfiles(
+          (membersResult.data || []).map(
+            (member) => ({
+              id: member.user_id,
+              display_name:
+                member.display_name ||
+                "ללא שם",
+              role: member.role,
+            })
+          )
+        );
+      }
+
+      if (!categoriesResult.error) {
+        setCategories(
+          categoriesResult.data || []
+        );
+      }
+
+      /*
+       * חשוב במיוחד:
+       * אם טעינת transactions נכשלה,
+       * אנחנו לא עושים setTransactions([]).
+       * משאירים את הרשימה שכבר מוצגת.
+       */
+      if (!transactionsResult.error) {
+        setTransactions(
+          transactionsResult.data || []
+        );
+      }
+
+      if (!recurringResult.error) {
+        setRecurring(
+          recurringResult.data || []
+        );
+      }
+
+      if (
+        transactionsResult.error
+      ) {
+        setError(
+          "לא הצלחתי לרענן את רשימת ההוצאות. הנתונים שכבר מוצגים נשמרו על המסך."
+        );
+      }
+    } catch (e) {
+      console.error(
+        "REFRESH ERROR:",
+        e
       );
 
-      setCategories(categoriesResult.data || []);
-      setTransactions(transactionsResult.data || []);
-      setRecurring(recurringResult.data || []);
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "שגיאה בטעינת הנתונים");
+      /*
+       * לא מוחקים שום מידע שכבר קיים במסך.
+       */
+      if (
+        requestVersion ===
+        refreshVersionRef.current
+      ) {
+        setError(
+          e.message ||
+            "שגיאה בטעינת הנתונים"
+        );
+      }
     } finally {
-      setLoading(false);
+      if (
+        requestVersion ===
+        refreshVersionRef.current
+      ) {
+        setLoading(false);
+      }
     }
   }
 
   async function signIn(event) {
     event.preventDefault();
+
     setLoginError("");
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
+    const { error } =
+      await supabase.auth.signInWithPassword(
+        {
+          email: email.trim(),
+          password,
+        }
+      );
 
     if (error) {
       setLoginError(
@@ -860,29 +1256,64 @@ export default function BudgetApp() {
      TRANSACTIONS
   ===================================================== */
 
-  function openTx(transaction = null, kind = "expense") {
+  function openTx(
+    transaction = null,
+    kind = "expense"
+  ) {
     setError("");
     setDetailsTx(null);
     setEditingTx(transaction);
 
     if (transaction) {
       setTxForm({
-        description: transaction.description || "",
-        category_id: transaction.category_id || "",
-        expense_type: transaction.expense_type || "variable",
-        planned_amount: transaction.planned_amount ?? "",
-        actual_amount: transaction.actual_amount ?? "",
-        person_user_id: transaction.person_user_id || "",
+        description:
+          transaction.description ||
+          "",
+
+        category_id:
+          transaction.category_id ||
+          "",
+
+        expense_type:
+          transaction.expense_type ||
+          "variable",
+
+        planned_amount:
+          transaction.planned_amount ??
+          "",
+
+        actual_amount:
+          transaction.actual_amount ??
+          "",
+
+        person_user_id:
+          transaction.person_user_id ||
+          "",
+
         transaction_date:
           transaction.transaction_date ||
-          new Date().toISOString().slice(0, 10),
-        note: transaction.note || "",
-        payment_method: transaction.payment_method || "",
-        merchant: transaction.merchant || "",
+          new Date()
+            .toISOString()
+            .slice(0, 10),
+
+        note:
+          transaction.note || "",
+
+        payment_method:
+          transaction.payment_method ||
+          "",
+
+        merchant:
+          transaction.merchant || "",
+
         credit_card_last4:
-          transaction.credit_card_last4 || "",
+          transaction.credit_card_last4 ||
+          "",
+
         credit_card_provider:
-          transaction.credit_card_provider || "",
+          transaction.credit_card_provider ||
+          "",
+
         kind,
       });
     } else {
@@ -892,7 +1323,11 @@ export default function BudgetApp() {
       });
     }
 
-    setModal(kind === "income" ? "income" : "transaction");
+    setModal(
+      kind === "income"
+        ? "income"
+        : "transaction"
+    );
   }
 
   function closeModal() {
@@ -905,71 +1340,117 @@ export default function BudgetApp() {
   async function saveTx(event) {
     event.preventDefault();
 
-    if (saving || !household) return;
+    if (saving || !household) {
+      return;
+    }
 
     setError("");
 
     const form = txForm;
-    const kind = modal === "income" ? "income" : "expense";
 
-    const description = String(form.description || "").trim();
+    const kind =
+      modal === "income"
+        ? "income"
+        : "expense";
+
+    const description =
+      String(
+        form.description || ""
+      ).trim();
 
     const actual =
       form.actual_amount === ""
         ? null
-        : Number(form.actual_amount);
+        : Number(
+            form.actual_amount
+          );
 
     const planned =
-      kind === "expense" && form.expense_type === "fixed"
-        ? Number(form.planned_amount)
+      kind === "expense" &&
+      form.expense_type ===
+        "fixed"
+        ? Number(
+            form.planned_amount
+          )
         : actual;
 
     if (!description) {
-      setError("יש להזין תיאור.");
+      setError(
+        "יש להזין תיאור."
+      );
       return;
     }
 
     if (!form.transaction_date) {
-      setError("יש לבחור תאריך.");
+      setError(
+        "יש לבחור תאריך."
+      );
       return;
     }
 
     if (
       kind === "expense" &&
-      form.expense_type === "fixed" &&
-      (!Number.isFinite(planned) || planned < 0)
+      form.expense_type ===
+        "fixed" &&
+      (!Number.isFinite(
+        planned
+      ) ||
+        planned < 0)
     ) {
-      setError("יש להזין סכום מתוכנן תקין.");
+      setError(
+        "יש להזין סכום מתוכנן תקין."
+      );
       return;
     }
 
     if (
       actual !== null &&
-      (!Number.isFinite(actual) || actual < 0)
+      (!Number.isFinite(
+        actual
+      ) ||
+        actual < 0)
     ) {
-      setError("יש להזין סכום בפועל תקין.");
+      setError(
+        "יש להזין סכום בפועל תקין."
+      );
       return;
     }
 
     if (
       kind === "income" &&
-      (!Number.isFinite(actual) || actual < 0)
+      (!Number.isFinite(
+        actual
+      ) ||
+        actual < 0)
     ) {
-      setError("יש להזין סכום תקין.");
+      setError(
+        "יש להזין סכום תקין."
+      );
       return;
     }
 
     const row = {
-      household_id: household.id,
-      created_by: user?.id || null,
+      household_id:
+        household.id,
+
+      created_by:
+        user?.id || null,
+
       kind,
+
       description,
-      category_id: form.category_id || null,
-      transaction_date: form.transaction_date,
+
+      category_id:
+        form.category_id ||
+        null,
+
+      transaction_date:
+        form.transaction_date,
 
       planned_amount:
         kind === "expense" &&
-        form.expense_type === "fixed"
+        form.expense_type ===
+          "fixed"
           ? planned
           : actual,
 
@@ -978,30 +1459,43 @@ export default function BudgetApp() {
           ? true
           : actual !== null,
 
-      actual_amount: actual,
+      actual_amount:
+        actual,
 
       expense_type:
         kind === "expense"
           ? form.expense_type
           : null,
 
-      person_user_id: form.person_user_id || null,
+      person_user_id:
+        form.person_user_id ||
+        null,
 
       note:
-        String(form.note || "").trim() || null,
+        String(
+          form.note || ""
+        ).trim() || null,
 
-      payment_method: form.payment_method || null,
+      payment_method:
+        form.payment_method ||
+        null,
 
       merchant:
-        String(form.merchant || "").trim() || null,
+        String(
+          form.merchant || ""
+        ).trim() || null,
 
       credit_card_last4:
-        String(form.credit_card_last4 || "")
+        String(
+          form.credit_card_last4 ||
+            ""
+        )
           .replace(/\D/g, "")
           .slice(-4) || null,
 
       credit_card_provider:
-        form.credit_card_provider || null,
+        form.credit_card_provider ||
+        null,
     };
 
     setSaving(true);
@@ -1010,52 +1504,90 @@ export default function BudgetApp() {
       let result;
 
       if (editingTx) {
-        result = await supabase
-          .from("transactions")
-          .update(row)
-          .eq("id", editingTx.id)
-          .eq("household_id", household.id)
-          .select("*")
-          .single();
+        result =
+          await supabase
+            .from(
+              "transactions"
+            )
+            .update(row)
+            .eq(
+              "id",
+              editingTx.id
+            )
+            .eq(
+              "household_id",
+              household.id
+            )
+            .select("*")
+            .single();
       } else {
-        result = await supabase
-          .from("transactions")
-          .insert(row)
-          .select("*")
-          .single();
+        result =
+          await supabase
+            .from(
+              "transactions"
+            )
+            .insert(row)
+            .select("*")
+            .single();
       }
 
-      if (result.error) throw result.error;
+      if (result.error) {
+        throw result.error;
+      }
 
-      /*
-       * חשוב:
-       * מוסיפים את התנועה שחזרה מהשרת מיד לרשימה.
-       * זה מונע מצב שבו השמירה הצליחה אבל המסך נשאר עם
-       * רשימה ישנה.
-       */
       if (result.data) {
         if (editingTx) {
-          setTransactions((current) =>
-            current.map((tx) =>
-              tx.id === result.data.id
-                ? result.data
-                : tx
-            )
+          setTransactions(
+            (current) =>
+              current.map(
+                (tx) =>
+                  tx.id ===
+                  result.data.id
+                    ? result.data
+                    : tx
+              )
           );
         } else {
-          setTransactions((current) =>
-            [result.data, ...current].sort((a, b) => {
-              const dateCompare =
-                String(b.transaction_date || "").localeCompare(
-                  String(a.transaction_date || "")
-                );
+          setTransactions(
+            (current) =>
+              [
+                result.data,
+                ...current.filter(
+                  (tx) =>
+                    tx.id !==
+                    result.data.id
+                ),
+              ].sort(
+                (a, b) => {
+                  const dateCompare =
+                    String(
+                      b.transaction_date ||
+                        ""
+                    ).localeCompare(
+                      String(
+                        a.transaction_date ||
+                          ""
+                      )
+                    );
 
-              if (dateCompare !== 0) return dateCompare;
+                  if (
+                    dateCompare !==
+                    0
+                  ) {
+                    return dateCompare;
+                  }
 
-              return String(b.created_at || "").localeCompare(
-                String(a.created_at || "")
-              );
-            })
+                  return String(
+                    b.created_at ||
+                      ""
+                  ).localeCompare(
+                    String(
+                      a.created_at ||
+                        ""
+                    )
+                  );
+                }
+              )
           );
         }
       }
@@ -1063,11 +1595,15 @@ export default function BudgetApp() {
       closeModal();
 
       /*
-       * רענון נוסף מהשרת כדי לוודא שהמצב המקומי והשרת זהים.
+       * השרת עדיין נבדק,
+       * אבל refresh מוגן באמצעות requestVersion.
        */
       await refresh();
     } catch (e) {
-      console.error("SAVE TRANSACTION ERROR:", e);
+      console.error(
+        "SAVE TRANSACTION ERROR:",
+        e
+      );
 
       setError(
         e.message ||
@@ -1082,21 +1618,44 @@ export default function BudgetApp() {
      RECURRING
   ===================================================== */
 
-  function openRecurring(item = null) {
+  function openRecurring(
+    item = null
+  ) {
     setError("");
     setEditingRecurring(item);
 
     setRecForm(
       item
         ? {
-            name: item.name || "",
-            category_id: item.category_id || "",
-            planned_amount: item.planned_amount ?? "",
-            day_of_month: item.day_of_month ?? "1",
-            payment_method: item.payment_method || "",
-            merchant: item.merchant || "",
-            person_user_id: item.person_user_id || "",
-            note: item.note || "",
+            name:
+              item.name || "",
+
+            category_id:
+              item.category_id ||
+              "",
+
+            planned_amount:
+              item.planned_amount ??
+              "",
+
+            day_of_month:
+              item.day_of_month ??
+              "1",
+
+            payment_method:
+              item.payment_method ||
+              "",
+
+            merchant:
+              item.merchant ||
+              "",
+
+            person_user_id:
+              item.person_user_id ||
+              "",
+
+            note:
+              item.note || "",
           }
         : emptyRecurring()
     );
@@ -1104,42 +1663,100 @@ export default function BudgetApp() {
     setModal("recurring");
   }
 
-  async function saveRecurring(event) {
+  async function saveRecurring(
+    event
+  ) {
     event.preventDefault();
 
-    if (saving || !household) return;
+    if (saving || !household) {
+      return;
+    }
 
     setError("");
 
-    const planned = Number(recForm.planned_amount);
-    const day = Number(recForm.day_of_month);
+    const planned =
+      Number(
+        recForm.planned_amount
+      );
 
-    if (!String(recForm.name || "").trim()) {
-      setError("יש להזין שם הוצאה.");
+    const day =
+      Number(
+        recForm.day_of_month
+      );
+
+    if (
+      !String(
+        recForm.name || ""
+      ).trim()
+    ) {
+      setError(
+        "יש להזין שם הוצאה."
+      );
       return;
     }
 
-    if (!Number.isFinite(planned) || planned < 0) {
-      setError("יש להזין סכום מתוכנן תקין.");
+    if (
+      !Number.isFinite(
+        planned
+      ) ||
+      planned < 0
+    ) {
+      setError(
+        "יש להזין סכום מתוכנן תקין."
+      );
       return;
     }
 
-    if (!Number.isInteger(day) || day < 1 || day > 31) {
-      setError("יום בחודש חייב להיות בין 1 ל־31.");
+    if (
+      !Number.isInteger(day) ||
+      day < 1 ||
+      day > 31
+    ) {
+      setError(
+        "יום בחודש חייב להיות בין 1 ל־31."
+      );
       return;
     }
 
     const row = {
-      household_id: household.id,
-      name: String(recForm.name).trim(),
-      category_id: recForm.category_id || null,
-      planned_amount: planned,
-      day_of_month: day,
-      person_user_id: recForm.person_user_id || null,
+      household_id:
+        household.id,
+
+      name:
+        String(
+          recForm.name
+        ).trim(),
+
+      category_id:
+        recForm.category_id ||
+        null,
+
+      planned_amount:
+        planned,
+
+      day_of_month:
+        day,
+
+      person_user_id:
+        recForm.person_user_id ||
+        null,
+
       is_active: true,
-      note: String(recForm.note || "").trim() || null,
-      payment_method: recForm.payment_method || null,
-      merchant: String(recForm.merchant || "").trim() || null,
+
+      note:
+        String(
+          recForm.note || ""
+        ).trim() || null,
+
+      payment_method:
+        recForm.payment_method ||
+        null,
+
+      merchant:
+        String(
+          recForm.merchant ||
+            ""
+        ).trim() || null,
     };
 
     setSaving(true);
@@ -1148,27 +1765,43 @@ export default function BudgetApp() {
       let result;
 
       if (editingRecurring) {
-        result = await supabase
-          .from("recurring_expenses")
-          .update(row)
-          .eq("id", editingRecurring.id)
-          .eq("household_id", household.id)
-          .select("*")
-          .single();
+        result =
+          await supabase
+            .from(
+              "recurring_expenses"
+            )
+            .update(row)
+            .eq(
+              "id",
+              editingRecurring.id
+            )
+            .eq(
+              "household_id",
+              household.id
+            )
+            .select("*")
+            .single();
       } else {
-        result = await supabase
-          .from("recurring_expenses")
-          .insert(row)
-          .select("*")
-          .single();
+        result =
+          await supabase
+            .from(
+              "recurring_expenses"
+            )
+            .insert(row)
+            .select("*")
+            .single();
       }
 
-      if (result.error) throw result.error;
+      if (result.error) {
+        throw result.error;
+      }
 
       closeModal();
+
       await refresh();
     } catch (e) {
       console.error(e);
+
       setError(
         e.message ||
           "לא הצלחתי לשמור את ההוצאה הקבועה."
@@ -1178,22 +1811,43 @@ export default function BudgetApp() {
     }
   }
 
-  async function chargeRecurring(item) {
-    if (saving || !household) return;
+  async function chargeRecurring(
+    item
+  ) {
+    if (
+      saving ||
+      !household
+    ) {
+      return;
+    }
 
-    const actualText = window.prompt(
-      `סכום בפועל עבור ${item.name}\nמתוכנן: ${money(
-        item.planned_amount
-      )}`,
-      String(item.planned_amount ?? "")
-    );
+    const actualText =
+      window.prompt(
+        `סכום בפועל עבור ${item.name}\nמתוכנן: ${money(
+          item.planned_amount
+        )}`,
+        String(
+          item.planned_amount ??
+            ""
+        )
+      );
 
-    if (actualText === null) return;
+    if (actualText === null) {
+      return;
+    }
 
-    const actual = Number(actualText);
+    const actual =
+      Number(actualText);
 
-    if (!Number.isFinite(actual) || actual < 0) {
-      window.alert("יש להזין סכום תקין.");
+    if (
+      !Number.isFinite(
+        actual
+      ) ||
+      actual < 0
+    ) {
+      window.alert(
+        "יש להזין סכום תקין."
+      );
       return;
     }
 
@@ -1201,69 +1855,150 @@ export default function BudgetApp() {
     setError("");
 
     try {
-      const { data: existing, error: findError } =
-        await supabase
-          .from("transactions")
-          .select("*")
-          .eq("recurring_expense_id", item.id)
-          .eq("recurring_month", month)
-          .maybeSingle();
+      const {
+        data: existing,
+        error: findError,
+      } = await supabase
+        .from("transactions")
+        .select("*")
+        .eq(
+          "recurring_expense_id",
+          item.id
+        )
+        .eq(
+          "recurring_month",
+          month
+        )
+        .maybeSingle();
 
-      if (findError) throw findError;
+      if (findError) {
+        throw findError;
+      }
 
-      const day = Math.min(
-        Number(item.day_of_month) || 1,
-        28
-      );
+      const day =
+        Math.min(
+          Number(
+            item.day_of_month
+          ) || 1,
+          28
+        );
 
       const row = {
-        household_id: household.id,
-        created_by: user?.id || null,
+        household_id:
+          household.id,
+
+        created_by:
+          user?.id || null,
+
         kind: "expense",
-        description: item.name,
-        category_id: item.category_id || null,
-        transaction_date: `${month}-${String(day).padStart(
-          2,
-          "0"
-        )}`,
-        planned_amount: Number(item.planned_amount || 0),
+
+        description:
+          item.name,
+
+        category_id:
+          item.category_id ||
+          null,
+
+        transaction_date:
+          `${month}-${String(
+            day
+          ).padStart(2, "0")}`,
+
+        planned_amount:
+          Number(
+            item.planned_amount ||
+              0
+          ),
+
         completed: true,
-        actual_amount: actual,
-        expense_type: "fixed",
-        person_user_id: item.person_user_id || null,
-        note: item.note || null,
-        payment_method: item.payment_method || null,
-        merchant: item.merchant || null,
-        credit_card_provider: null,
-        credit_card_last4: null,
-        recurring_expense_id: item.id,
-        recurring_month: month,
+
+        actual_amount:
+          actual,
+
+        expense_type:
+          "fixed",
+
+        person_user_id:
+          item.person_user_id ||
+          null,
+
+        note:
+          item.note || null,
+
+        payment_method:
+          item.payment_method ||
+          null,
+
+        merchant:
+          item.merchant ||
+          null,
+
+        credit_card_provider:
+          null,
+
+        credit_card_last4:
+          null,
+
+        recurring_expense_id:
+          item.id,
+
+        recurring_month:
+          month,
       };
 
       let result;
 
       if (existing) {
-        result = await supabase
-          .from("transactions")
-          .update(row)
-          .eq("id", existing.id)
-          .select("*")
-          .single();
+        result =
+          await supabase
+            .from(
+              "transactions"
+            )
+            .update(row)
+            .eq(
+              "id",
+              existing.id
+            )
+            .select("*")
+            .single();
       } else {
-        result = await supabase
-          .from("transactions")
-          .insert(row)
-          .select("*")
-          .single();
+        result =
+          await supabase
+            .from(
+              "transactions"
+            )
+            .insert(row)
+            .select("*")
+            .single();
       }
 
-      if (result.error) throw result.error;
+      if (result.error) {
+        throw result.error;
+      }
+
+      /*
+       * מציגים מיד את החיוב שחזר מהשרת.
+       */
+      if (result.data) {
+        setTransactions(
+          (current) => [
+            result.data,
+            ...current.filter(
+              (tx) =>
+                tx.id !==
+                result.data.id
+            ),
+          ]
+        );
+      }
 
       await refresh();
     } catch (e) {
       console.error(e);
+
       setError(
-        e.message || "לא הצלחתי לסמן כחויב."
+        e.message ||
+          "לא הצלחתי לסמן כחויב."
       );
     } finally {
       setSaving(false);
@@ -1275,39 +2010,81 @@ export default function BudgetApp() {
     setSaving(true);
 
     try {
-      const { error } = await supabase
-        .from("transactions")
-        .delete()
-        .eq("id", tx.id)
-        .eq("household_id", household.id);
+      const { error } =
+        await supabase
+          .from("transactions")
+          .delete()
+          .eq("id", tx.id)
+          .eq(
+            "household_id",
+            household.id
+          );
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      setTransactions(
+        (current) =>
+          current.filter(
+            (item) =>
+              item.id !== tx.id
+          )
+      );
 
       setDetailsTx(null);
+
       await refresh();
     } catch (e) {
-      setError(e.message || "המחיקה נכשלה.");
+      setError(
+        e.message ||
+          "המחיקה נכשלה."
+      );
     } finally {
       setSaving(false);
     }
   }
 
-  async function deleteRecurring(item) {
+  async function deleteRecurring(
+    item
+  ) {
     setConfirm(null);
     setSaving(true);
 
     try {
-      const { error } = await supabase
-        .from("recurring_expenses")
-        .delete()
-        .eq("id", item.id)
-        .eq("household_id", household.id);
+      const { error } =
+        await supabase
+          .from(
+            "recurring_expenses"
+          )
+          .delete()
+          .eq(
+            "id",
+            item.id
+          )
+          .eq(
+            "household_id",
+            household.id
+          );
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      setRecurring(
+        (current) =>
+          current.filter(
+            (r) =>
+              r.id !== item.id
+          )
+      );
 
       await refresh();
     } catch (e) {
-      setError(e.message || "המחיקה נכשלה.");
+      setError(
+        e.message ||
+          "המחיקה נכשלה."
+      );
     } finally {
       setSaving(false);
     }
@@ -1318,38 +2095,61 @@ export default function BudgetApp() {
   ===================================================== */
 
   async function addCategory() {
-    const name = String(newCategory || "").trim();
+    const name =
+      String(
+        newCategory || ""
+      ).trim();
 
-    if (!name || !household) return;
+    if (
+      !name ||
+      !household
+    ) {
+      return;
+    }
 
     setSaving(true);
     setError("");
 
     try {
-      const { error } = await supabase
-        .from("categories")
-        .insert({
-          household_id: household.id,
-          name,
-        });
+      const { error } =
+        await supabase
+          .from("categories")
+          .insert({
+            household_id:
+              household.id,
+            name,
+          });
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
       setNewCategory("");
+
       await refresh();
     } catch (e) {
       console.error(e);
+
       setError(
-        e.message || "לא הצלחתי להוסיף קטגוריה."
+        e.message ||
+          "לא הצלחתי להוסיף קטגוריה."
       );
     } finally {
       setSaving(false);
     }
   }
 
-  function startEditCategory(category) {
-    setEditingCategory(category);
-    setCategoryNameForm(category.name || "");
+  function startEditCategory(
+    category
+  ) {
+    setEditingCategory(
+      category
+    );
+
+    setCategoryNameForm(
+      category.name || ""
+    );
+
     setError("");
   }
 
@@ -1359,12 +2159,22 @@ export default function BudgetApp() {
   }
 
   async function saveCategoryName() {
-    if (!editingCategory || !household) return;
+    if (
+      !editingCategory ||
+      !household
+    ) {
+      return;
+    }
 
-    const name = String(categoryNameForm || "").trim();
+    const name =
+      String(
+        categoryNameForm || ""
+      ).trim();
 
     if (!name) {
-      setError("יש להזין שם קטגוריה.");
+      setError(
+        "יש להזין שם קטגוריה."
+      );
       return;
     }
 
@@ -1372,43 +2182,67 @@ export default function BudgetApp() {
     setError("");
 
     try {
-      const { error } = await supabase
-        .from("categories")
-        .update({ name })
-        .eq("id", editingCategory.id)
-        .eq("household_id", household.id);
+      const { error } =
+        await supabase
+          .from("categories")
+          .update({ name })
+          .eq(
+            "id",
+            editingCategory.id
+          )
+          .eq(
+            "household_id",
+            household.id
+          );
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
       cancelEditCategory();
+
       await refresh();
     } catch (e) {
       console.error(e);
+
       setError(
-        e.message || "לא הצלחתי לשנות את הקטגוריה."
+        e.message ||
+          "לא הצלחתי לשנות את הקטגוריה."
       );
     } finally {
       setSaving(false);
     }
   }
 
-  async function deleteCategory(category) {
+  async function deleteCategory(
+    category
+  ) {
     setConfirm(null);
     setSaving(true);
     setError("");
 
     try {
-      const { count, error: countError } =
-        await supabase
-          .from("transactions")
-          .select("id", {
-            count: "exact",
-            head: true,
-          })
-          .eq("household_id", household.id)
-          .eq("category_id", category.id);
+      const {
+        count,
+        error: countError,
+      } = await supabase
+        .from("transactions")
+        .select("id", {
+          count: "exact",
+          head: true,
+        })
+        .eq(
+          "household_id",
+          household.id
+        )
+        .eq(
+          "category_id",
+          category.id
+        );
 
-      if (countError) throw countError;
+      if (countError) {
+        throw countError;
+      }
 
       if (Number(count || 0) > 0) {
         setError(
@@ -1417,19 +2251,30 @@ export default function BudgetApp() {
         return;
       }
 
-      const { error } = await supabase
-        .from("categories")
-        .delete()
-        .eq("id", category.id)
-        .eq("household_id", household.id);
+      const { error } =
+        await supabase
+          .from("categories")
+          .delete()
+          .eq(
+            "id",
+            category.id
+          )
+          .eq(
+            "household_id",
+            household.id
+          );
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
 
       await refresh();
     } catch (e) {
       console.error(e);
+
       setError(
-        e.message || "לא הצלחתי למחוק את הקטגוריה."
+        e.message ||
+          "לא הצלחתי למחוק את הקטגוריה."
       );
     } finally {
       setSaving(false);
@@ -1452,9 +2297,15 @@ export default function BudgetApp() {
     setImportToDate("");
   }
 
-  async function handleCreditFile(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  async function handleCreditFile(
+    event
+  ) {
+    const file =
+      event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
 
     setImportLoading(true);
     setImportError("");
@@ -1464,22 +2315,29 @@ export default function BudgetApp() {
     setImportFileInfo(null);
 
     try {
-      const text = await file.text();
+      const text =
+        await file.text();
 
       let detectedProvider =
-        detectProviderFromFile(text, file.name);
+        detectProviderFromFile(
+          text,
+          file.name
+        );
 
       if (!detectedProvider) {
         detectedProvider =
-          normalizeProvider(importProvider);
+          normalizeProvider(
+            importProvider
+          );
       }
 
-      const parsed = parseCreditFile(
-        text,
-        categories,
-        detectedProvider,
-        file.name
-      );
+      const parsed =
+        parseCreditFile(
+          text,
+          categories,
+          detectedProvider,
+          file.name
+        );
 
       if (!parsed.provider) {
         throw new Error(
@@ -1487,56 +2345,102 @@ export default function BudgetApp() {
         );
       }
 
-      const existingKeys = new Set(
-        transactions.map((tx) =>
-          makeImportKey({
-            credit_card_provider:
-              tx.credit_card_provider || "",
-            credit_card_last4:
-              tx.credit_card_last4 || "",
-            transaction_date:
-              tx.transaction_date || "",
-            actual_amount:
-              tx.actual_amount || 0,
-            merchant: tx.merchant || "",
-            description:
-              tx.description || "",
-          })
-        )
-      );
+      const existingKeys =
+        new Set(
+          transactions.map(
+            (tx) =>
+              makeImportKey({
+                credit_card_provider:
+                  tx.credit_card_provider ||
+                  "",
 
-      const enriched = parsed.rows.map((row) => ({
-        ...row,
-        duplicate: existingKeys.has(row.importKey),
-        selected: !existingKeys.has(row.importKey),
-      }));
+                credit_card_last4:
+                  tx.credit_card_last4 ||
+                  "",
+
+                transaction_date:
+                  tx.transaction_date ||
+                  "",
+
+                actual_amount:
+                  tx.actual_amount ||
+                  0,
+
+                merchant:
+                  tx.merchant ||
+                  "",
+
+                description:
+                  tx.description ||
+                  "",
+              })
+          )
+        );
+
+      const enriched =
+        parsed.rows.map(
+          (row) => ({
+            ...row,
+
+            duplicate:
+              existingKeys.has(
+                row.importKey
+              ),
+
+            selected:
+              !existingKeys.has(
+                row.importKey
+              ),
+          })
+        );
 
       const selected = {};
 
-      enriched.forEach((row) => {
-        selected[row.id] = row.selected;
-      });
+      enriched.forEach(
+        (row) => {
+          selected[row.id] =
+            row.selected;
+        }
+      );
 
       setImportFile(file);
-      setImportProvider(parsed.provider);
+
+      setImportProvider(
+        parsed.provider
+      );
 
       setImportFileInfo({
         name: file.name,
-        provider: parsed.provider,
-        cardLast4: parsed.cardLast4,
-        total: enriched.length,
-        duplicates: enriched.filter(
-          (r) => r.duplicate
-        ).length,
-        amount: enriched.reduce(
-          (sum, r) =>
-            sum + Number(r.actual_amount || 0),
-          0
-        ),
+        provider:
+          parsed.provider,
+        cardLast4:
+          parsed.cardLast4,
+        total:
+          enriched.length,
+        duplicates:
+          enriched.filter(
+            (r) =>
+              r.duplicate
+          ).length,
+        amount:
+          enriched.reduce(
+            (sum, r) =>
+              sum +
+              Number(
+                r.actual_amount ||
+                  0
+              ),
+            0
+          ),
       });
 
-      setImportPreview(enriched);
-      setImportSelected(selected);
+      setImportPreview(
+        enriched
+      );
+
+      setImportSelected(
+        selected
+      );
 
       if (!enriched.length) {
         setImportMessage(
@@ -1545,153 +2449,256 @@ export default function BudgetApp() {
       }
     } catch (e) {
       console.error(e);
+
       setImportError(
-        e.message || "לא הצלחתי לקרוא את הקובץ."
+        e.message ||
+          "לא הצלחתי לקרוא את הקובץ."
       );
     } finally {
       setImportLoading(false);
+
       event.target.value = "";
     }
   }
 
-  function toggleImportRow(id) {
-    setImportSelected((current) => ({
-      ...current,
-      [id]: !current[id],
-    }));
+  function toggleImportRow(
+    id
+  ) {
+    setImportSelected(
+      (current) => ({
+        ...current,
+        [id]:
+          !current[id],
+      })
+    );
   }
 
   function selectAllImportRows() {
-    const next = { ...importSelected };
+    const next = {
+      ...importSelected,
+    };
 
-    filteredImportRows.forEach((row) => {
-      next[row.id] = !row.duplicate;
-    });
+    filteredImportRows.forEach(
+      (row) => {
+        next[row.id] =
+          !row.duplicate;
+      }
+    );
 
     setImportSelected(next);
   }
 
   function deselectAllImportRows() {
-    const next = { ...importSelected };
+    const next = {
+      ...importSelected,
+    };
 
-    filteredImportRows.forEach((row) => {
-      next[row.id] = false;
-    });
+    filteredImportRows.forEach(
+      (row) => {
+        next[row.id] = false;
+      }
+    );
 
     setImportSelected(next);
   }
 
-  function changeImportCategory(id, categoryId) {
-    setImportPreview((current) =>
-      current.map((row) =>
-        row.id === id
-          ? { ...row, category_id: categoryId }
-          : row
-      )
+  function changeImportCategory(
+    id,
+    categoryId
+  ) {
+    setImportPreview(
+      (current) =>
+        current.map(
+          (row) =>
+            row.id === id
+              ? {
+                  ...row,
+                  category_id:
+                    categoryId,
+                }
+              : row
+        )
     );
   }
 
-  function changeImportType(id, expenseType) {
-    setImportPreview((current) =>
-      current.map((row) =>
-        row.id === id
-          ? { ...row, expense_type: expenseType }
-          : row
-      )
+  function changeImportType(
+    id,
+    expenseType
+  ) {
+    setImportPreview(
+      (current) =>
+        current.map(
+          (row) =>
+            row.id === id
+              ? {
+                  ...row,
+                  expense_type:
+                    expenseType,
+                }
+              : row
+        )
     );
   }
 
   async function importSelectedTransactions() {
-    if (importSaving || !household) return;
+    if (
+      importSaving ||
+      !household
+    ) {
+      return;
+    }
 
     setImportError("");
     setImportMessage("");
 
-    const selected = filteredImportRows.filter(
-      (row) =>
-        importSelected[row.id] &&
-        !row.duplicate
-    );
+    const selected =
+      filteredImportRows.filter(
+        (row) =>
+          importSelected[
+            row.id
+          ] &&
+          !row.duplicate
+      );
 
     if (!selected.length) {
-      setImportError("לא נבחרו עסקאות לייבוא.");
+      setImportError(
+        "לא נבחרו עסקאות לייבוא."
+      );
       return;
     }
 
     setImportSaving(true);
 
     try {
-      const { data: latest, error: latestError } =
-        await supabase
-          .from("transactions")
-          .select(
-            "id,credit_card_provider,credit_card_last4,transaction_date,actual_amount,merchant,description"
+      const {
+        data: latest,
+        error: latestError,
+      } = await supabase
+        .from("transactions")
+        .select(
+          "id,credit_card_provider,credit_card_last4,transaction_date,actual_amount,merchant,description"
+        )
+        .eq(
+          "household_id",
+          household.id
+        );
+
+      if (latestError) {
+        throw latestError;
+      }
+
+      const existingKeys =
+        new Set(
+          (latest || []).map(
+            (tx) =>
+              makeImportKey({
+                credit_card_provider:
+                  tx.credit_card_provider ||
+                  "",
+
+                credit_card_last4:
+                  tx.credit_card_last4 ||
+                  "",
+
+                transaction_date:
+                  tx.transaction_date ||
+                  "",
+
+                actual_amount:
+                  tx.actual_amount ||
+                  0,
+
+                merchant:
+                  tx.merchant ||
+                  "",
+
+                description:
+                  tx.description ||
+                  "",
+              })
           )
-          .eq("household_id", household.id);
+        );
 
-      if (latestError) throw latestError;
+      const rowsToInsert =
+        selected
+          .filter(
+            (row) =>
+              !existingKeys.has(
+                row.importKey
+              )
+          )
+          .map((row) => ({
+            household_id:
+              household.id,
 
-      const existingKeys = new Set(
-        (latest || []).map((tx) =>
-          makeImportKey({
-            credit_card_provider:
-              tx.credit_card_provider || "",
-            credit_card_last4:
-              tx.credit_card_last4 || "",
-            transaction_date:
-              tx.transaction_date || "",
-            actual_amount:
-              tx.actual_amount || 0,
-            merchant:
-              tx.merchant || "",
+            created_by:
+              user?.id || null,
+
+            kind: "expense",
+
             description:
-              tx.description || "",
-          })
-        )
-      );
+              row.description,
 
-      const rowsToInsert = selected
-        .filter(
-          (row) =>
-            !existingKeys.has(row.importKey)
-        )
-        .map((row) => ({
-          household_id: household.id,
-          created_by: user?.id || null,
-          kind: "expense",
-          description: row.description,
-          category_id: row.category_id || null,
-          transaction_date: row.transaction_date,
-          planned_amount: row.actual_amount,
-          completed: true,
-          actual_amount: row.actual_amount,
-          expense_type:
-            row.expense_type || "variable",
-          person_user_id: null,
-          note:
-            [
-              row.notes,
-              row.transactionType
-                ? `סוג: ${row.transactionType}`
-                : "",
-              row.branch
-                ? `ענף: ${row.branch}`
-                : "",
-              "יובא מקובץ אשראי",
-            ]
-              .filter(Boolean)
-              .join(" · ") || null,
-          payment_method: "credit_card",
-          merchant: row.merchant || null,
-          credit_card_last4:
-            row.credit_card_last4 || null,
-          credit_card_provider:
-            row.credit_card_provider ||
-            importProvider ||
-            null,
-        }));
+            category_id:
+              row.category_id ||
+              null,
 
-      if (!rowsToInsert.length) {
+            transaction_date:
+              row.transaction_date,
+
+            planned_amount:
+              row.actual_amount,
+
+            completed: true,
+
+            actual_amount:
+              row.actual_amount,
+
+            expense_type:
+              row.expense_type ||
+              "variable",
+
+            person_user_id:
+              null,
+
+            note:
+              [
+                row.notes,
+
+                row.transactionType
+                  ? `סוג: ${row.transactionType}`
+                  : "",
+
+                row.branch
+                  ? `ענף: ${row.branch}`
+                  : "",
+
+                "יובא מקובץ אשראי",
+              ]
+                .filter(Boolean)
+                .join(" · ") ||
+              null,
+
+            payment_method:
+              "credit_card",
+
+            merchant:
+              row.merchant ||
+              null,
+
+            credit_card_last4:
+              row.credit_card_last4 ||
+              null,
+
+            credit_card_provider:
+              row.credit_card_provider ||
+              importProvider ||
+              null,
+          }));
+
+      if (
+        !rowsToInsert.length
+      ) {
         setImportMessage(
           "כל העסקאות שנבחרו כבר קיימות במערכת — לא נוצרו כפילויות."
         );
@@ -1700,14 +2707,76 @@ export default function BudgetApp() {
         return;
       }
 
-      const { error } = await supabase
+      const {
+        data: insertedRows,
+        error,
+      } = await supabase
         .from("transactions")
-        .insert(rowsToInsert);
+        .insert(
+          rowsToInsert
+        )
+        .select("*");
 
-      if (error) throw error;
+      if (error) {
+        throw error;
+      }
+
+      /*
+       * מוסיפים מיד את העסקאות שיובאו לרשימה המקומית.
+       * כך הן מופיעות בטבלה גם לפני שה-refresh חוזר.
+       */
+      if (
+        insertedRows?.length
+      ) {
+        setTransactions(
+          (current) =>
+            [
+              ...insertedRows,
+              ...current.filter(
+                (existing) =>
+                  !insertedRows.some(
+                    (inserted) =>
+                      inserted.id ===
+                      existing.id
+                  )
+              ),
+            ].sort(
+              (a, b) => {
+                const dateCompare =
+                  String(
+                    b.transaction_date ||
+                      ""
+                  ).localeCompare(
+                    String(
+                      a.transaction_date ||
+                        ""
+                    )
+                  );
+
+                if (
+                  dateCompare !==
+                  0
+                ) {
+                  return dateCompare;
+                }
+
+                return String(
+                  b.created_at ||
+                    ""
+                ).localeCompare(
+                  String(
+                    a.created_at ||
+                      ""
+                  )
+                );
+              }
+            )
+        );
+      }
 
       const skipped =
-        selected.length - rowsToInsert.length;
+        selected.length -
+        rowsToInsert.length;
 
       setImportMessage(
         `יובאו ${rowsToInsert.length} עסקאות בהצלחה${
@@ -1717,33 +2786,48 @@ export default function BudgetApp() {
         }.`
       );
 
-      setImportPreview((current) =>
-        current.map((row) =>
-          importSelected[row.id]
-            ? {
-                ...row,
-                duplicate: true,
-                selected: false,
-              }
-            : row
-        )
+      setImportPreview(
+        (current) =>
+          current.map(
+            (row) =>
+              importSelected[
+                row.id
+              ]
+                ? {
+                    ...row,
+                    duplicate:
+                      true,
+                    selected:
+                      false,
+                  }
+                : row
+          )
       );
 
-      setImportSelected((current) => {
-        const next = { ...current };
+      setImportSelected(
+        (current) => {
+          const next = {
+            ...current,
+          };
 
-        selected.forEach((row) => {
-          next[row.id] = false;
-        });
+          selected.forEach(
+            (row) => {
+              next[row.id] =
+                false;
+            }
+          );
 
-        return next;
-      });
+          return next;
+        }
+      );
 
       await refresh();
     } catch (e) {
       console.error(e);
+
       setImportError(
-        e.message || "הייבוא נכשל."
+        e.message ||
+          "הייבוא נכשל."
       );
     } finally {
       setImportSaving(false);
@@ -1754,96 +2838,158 @@ export default function BudgetApp() {
      CALCULATIONS
   ===================================================== */
 
-  const categoryMap = useMemo(
-    () =>
-      Object.fromEntries(
-        categories.map((c) => [c.id, c.name])
-      ),
-    [categories]
-  );
+  const categoryMap =
+    useMemo(
+      () =>
+        Object.fromEntries(
+          categories.map(
+            (c) => [
+              c.id,
+              c.name,
+            ]
+          )
+        ),
+      [categories]
+    );
 
-  const memberMap = useMemo(
-    () =>
-      Object.fromEntries(
-        profiles.map((p) => [
-          p.id,
-          p.display_name,
-        ])
-      ),
-    [profiles]
-  );
+  const memberMap =
+    useMemo(
+      () =>
+        Object.fromEntries(
+          profiles.map(
+            (p) => [
+              p.id,
+              p.display_name,
+            ]
+          )
+        ),
+      [profiles]
+    );
 
-  const expenseTx = useMemo(
-    () =>
-      transactions.filter(
-        (t) =>
-          t.kind === "expense" &&
-          t.actual_amount !== null
-      ),
-    [transactions]
-  );
+  const expenseTx =
+    useMemo(
+      () =>
+        transactions.filter(
+          (t) =>
+            t.kind ===
+              "expense" &&
+            t.actual_amount !==
+              null
+        ),
+      [transactions]
+    );
 
-  const incomeTx = useMemo(
-    () =>
-      transactions.filter(
-        (t) => t.kind === "income"
-      ),
-    [transactions]
-  );
+  const incomeTx =
+    useMemo(
+      () =>
+        transactions.filter(
+          (t) =>
+            t.kind ===
+            "income"
+        ),
+      [transactions]
+    );
 
-  const actualIncome = incomeTx.reduce(
-    (sum, t) =>
-      sum + Number(t.actual_amount || 0),
-    0
-  );
-
-  const actualExpenses = expenseTx.reduce(
-    (sum, t) =>
-      sum + Number(t.actual_amount || 0),
-    0
-  );
-
-  const fixedActual = expenseTx
-    .filter((t) => t.expense_type === "fixed")
-    .reduce(
+  const actualIncome =
+    incomeTx.reduce(
       (sum, t) =>
-        sum + Number(t.actual_amount || 0),
+        sum +
+        Number(
+          t.actual_amount ||
+            0
+        ),
       0
     );
 
-  const variableActual = expenseTx
-    .filter((t) => t.expense_type === "variable")
-    .reduce(
+  const actualExpenses =
+    expenseTx.reduce(
       (sum, t) =>
-        sum + Number(t.actual_amount || 0),
+        sum +
+        Number(
+          t.actual_amount ||
+            0
+        ),
       0
     );
 
-  const chargedRecurringIds = new Set(
+  const fixedActual =
     expenseTx
       .filter(
         (t) =>
-          t.recurring_expense_id &&
-          t.recurring_month === month
+          t.expense_type ===
+          "fixed"
       )
-      .map((t) => t.recurring_expense_id)
-  );
+      .reduce(
+        (sum, t) =>
+          sum +
+          Number(
+            t.actual_amount ||
+              0
+          ),
+        0
+      );
 
-  const pendingRecurring = recurring.filter(
-    (r) => !chargedRecurringIds.has(r.id)
-  );
+  const variableActual =
+    expenseTx
+      .filter(
+        (t) =>
+          t.expense_type ===
+          "variable"
+      )
+      .reduce(
+        (sum, t) =>
+          sum +
+          Number(
+            t.actual_amount ||
+              0
+          ),
+        0
+      );
 
-  const plannedFixed = recurring.reduce(
-    (sum, r) =>
-      sum + Number(r.planned_amount || 0),
-    0
-  );
+  const chargedRecurringIds =
+    new Set(
+      expenseTx
+        .filter(
+          (t) =>
+            t.recurring_expense_id &&
+            t.recurring_month ===
+              month
+        )
+        .map(
+          (t) =>
+            t.recurring_expense_id
+        )
+    );
 
-  const pendingPlanned = pendingRecurring.reduce(
-    (sum, r) =>
-      sum + Number(r.planned_amount || 0),
-    0
-  );
+  const pendingRecurring =
+    recurring.filter(
+      (r) =>
+        !chargedRecurringIds.has(
+          r.id
+        )
+    );
+
+  const plannedFixed =
+    recurring.reduce(
+      (sum, r) =>
+        sum +
+        Number(
+          r.planned_amount ||
+            0
+        ),
+      0
+    );
+
+  const pendingPlanned =
+    pendingRecurring.reduce(
+      (sum, r) =>
+        sum +
+        Number(
+          r.planned_amount ||
+            0
+        ),
+      0
+    );
 
   const typeChart = [
     {
@@ -1856,97 +3002,141 @@ export default function BudgetApp() {
     },
   ];
 
-  const categoryChart = useMemo(() => {
-    const map = {};
+  const categoryChart =
+    useMemo(() => {
+      const map = {};
 
-    expenseTx.forEach((transaction) => {
-      const name =
-        categoryMap[transaction.category_id] ||
-        "ללא קטגוריה";
+      expenseTx.forEach(
+        (transaction) => {
+          const name =
+            categoryMap[
+              transaction
+                .category_id
+            ] ||
+            "ללא קטגוריה";
 
-      map[name] =
-        (map[name] || 0) +
-        Number(transaction.actual_amount || 0);
-    });
+          map[name] =
+            (map[name] || 0) +
+            Number(
+              transaction.actual_amount ||
+                0
+            );
+        }
+      );
 
-    return Object.entries(map)
-      .map(([label, value]) => ({
-        label,
-        value,
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-  }, [expenseTx, categoryMap]);
+      return Object.entries(
+        map
+      )
+        .map(
+          ([label, value]) => ({
+            label,
+            value,
+          })
+        )
+        .sort(
+          (a, b) =>
+            b.value - a.value
+        )
+        .slice(0, 8);
+    }, [
+      expenseTx,
+      categoryMap,
+    ]);
 
   /* =====================================================
      IMPORT FILTER
   ===================================================== */
 
-  const filteredImportRows = useMemo(() => {
-    if (
-      importFromDate &&
-      importToDate &&
-      importFromDate > importToDate
-    ) {
-      return [];
-    }
-
-    return importPreview.filter((row) => {
-      const date = row.transaction_date || "";
-
+  const filteredImportRows =
+    useMemo(() => {
       if (
         importFromDate &&
-        date < importFromDate
-      ) {
-        return false;
-      }
-
-      if (
         importToDate &&
-        date > importToDate
+        importFromDate >
+          importToDate
       ) {
-        return false;
+        return [];
       }
 
-      return true;
-    });
-  }, [
-    importPreview,
-    importFromDate,
-    importToDate,
-  ]);
+      return importPreview.filter(
+        (row) => {
+          const date =
+            row.transaction_date ||
+            "";
+
+          if (
+            importFromDate &&
+            date <
+              importFromDate
+          ) {
+            return false;
+          }
+
+          if (
+            importToDate &&
+            date >
+              importToDate
+          ) {
+            return false;
+          }
+
+          return true;
+        }
+      );
+    }, [
+      importPreview,
+      importFromDate,
+      importToDate,
+    ]);
 
   const importDateRangeError =
     importFromDate &&
     importToDate &&
-    importFromDate > importToDate
+    importFromDate >
+      importToDate
       ? "התאריך 'מתאריך' חייב להיות לפני או שווה ל'עד תאריך'."
       : "";
 
-  const filteredImportFileInfo = useMemo(() => {
-    if (!importFileInfo) return null;
+  const filteredImportFileInfo =
+    useMemo(() => {
+      if (!importFileInfo) {
+        return null;
+      }
 
-    return {
-      ...importFileInfo,
-      total: filteredImportRows.length,
-      duplicates: filteredImportRows.filter(
-        (row) => row.duplicate
-      ).length,
-      amount: filteredImportRows.reduce(
-        (sum, row) =>
-          sum + Number(row.actual_amount || 0),
-        0
-      ),
-    };
-  }, [
-    importFileInfo,
-    filteredImportRows,
-  ]);
+      return {
+        ...importFileInfo,
+
+        total:
+          filteredImportRows.length,
+
+        duplicates:
+          filteredImportRows.filter(
+            (row) =>
+              row.duplicate
+          ).length,
+
+        amount:
+          filteredImportRows.reduce(
+            (sum, row) =>
+              sum +
+              Number(
+                row.actual_amount ||
+                  0
+              ),
+            0
+          ),
+      };
+    }, [
+      importFileInfo,
+      filteredImportRows,
+    ]);
 
   const selectedImportCount =
     filteredImportRows.filter(
       (row) =>
-        importSelected[row.id] &&
+        importSelected[
+          row.id
+        ] &&
         !row.duplicate
     ).length;
 
@@ -1954,12 +3144,18 @@ export default function BudgetApp() {
     filteredImportRows
       .filter(
         (row) =>
-          importSelected[row.id] &&
+          importSelected[
+            row.id
+          ] &&
           !row.duplicate
       )
       .reduce(
         (sum, row) =>
-          sum + Number(row.actual_amount || 0),
+          sum +
+          Number(
+            row.actual_amount ||
+              0
+          ),
         0
       );
 
@@ -1991,22 +3187,28 @@ export default function BudgetApp() {
 
           <label>
             אימייל
+
             <input
               type="email"
               value={email}
               onChange={(e) =>
-                setEmail(e.target.value)
+                setEmail(
+                  e.target.value
+                )
               }
             />
           </label>
 
           <label>
             סיסמה
+
             <input
               type="password"
               value={password}
               onChange={(e) =>
-                setPassword(e.target.value)
+                setPassword(
+                  e.target.value
+                )
               }
             />
           </label>
@@ -2028,7 +3230,10 @@ export default function BudgetApp() {
     );
   }
 
-  if (loading && !household) {
+  if (
+    loading &&
+    !household
+  ) {
     return (
       <main
         className="loading-page"
@@ -2055,13 +3260,16 @@ export default function BudgetApp() {
           </div>
 
           <h1>
-            {household?.name || "התקציב שלי"}
+            {household?.name ||
+              "התקציב שלי"}
           </h1>
         </div>
 
         <div className="top-actions">
           <span className="user-name">
-            {memberMap[user.id] || "משתמשת"}
+            {memberMap[
+              user.id
+            ] || "משתמשת"}
           </span>
 
           <button
@@ -2078,7 +3286,10 @@ export default function BudgetApp() {
           className="month-arrow"
           onClick={() =>
             setMonth(
-              shiftMonth(month, -1)
+              shiftMonth(
+                month,
+                -1
+              )
             )
           }
         >
@@ -2093,7 +3304,10 @@ export default function BudgetApp() {
           className="month-arrow"
           onClick={() =>
             setMonth(
-              shiftMonth(month, 1)
+              shiftMonth(
+                month,
+                1
+              )
             )
           }
         >
@@ -2103,25 +3317,47 @@ export default function BudgetApp() {
 
       <nav className="tabs">
         {[
-          ["dashboard", "סיכום"],
-          ["expenses", "הוצאות"],
-          ["fixed", "הוצאות קבועות"],
-          ["income", "הכנסות"],
-          ["import", "יבוא אשראי"],
-          ["categories", "קטגוריות"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            className={
-              tab === id
-                ? "tab active"
-                : "tab"
-            }
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
+          [
+            "dashboard",
+            "סיכום",
+          ],
+          [
+            "expenses",
+            "הוצאות",
+          ],
+          [
+            "fixed",
+            "הוצאות קבועות",
+          ],
+          [
+            "income",
+            "הכנסות",
+          ],
+          [
+            "import",
+            "יבוא אשראי",
+          ],
+          [
+            "categories",
+            "קטגוריות",
+          ],
+        ].map(
+          ([id, label]) => (
+            <button
+              key={id}
+              className={
+                tab === id
+                  ? "tab active"
+                  : "tab"
+              }
+              onClick={() =>
+                setTab(id)
+              }
+            >
+              {label}
+            </button>
+          )
+        )}
       </nav>
 
       {error && (
@@ -2134,17 +3370,25 @@ export default function BudgetApp() {
           DASHBOARD
       =================================================== */}
 
-      {tab === "dashboard" && (
+      {tab ===
+        "dashboard" && (
         <>
           <div className="page-title">
             <div>
-              <h2>סיכום חודשי</h2>
-              <p>{monthLabel(month)}</p>
+              <h2>
+                סיכום חודשי
+              </h2>
+
+              <p>
+                {monthLabel(month)}
+              </p>
             </div>
 
             <button
               className="primary"
-              onClick={() => openTx()}
+              onClick={() =>
+                openTx()
+              }
             >
               ＋ הוצאה
             </button>
@@ -2153,23 +3397,30 @@ export default function BudgetApp() {
           <section className="cards">
             <Stat
               title="הכנסות בפועל"
-              value={money(actualIncome)}
+              value={money(
+                actualIncome
+              )}
               tone="positive"
             />
 
             <Stat
               title="הוצאות בפועל"
-              value={money(actualExpenses)}
+              value={money(
+                actualExpenses
+              )}
               tone="negative"
             />
 
             <Stat
               title="יתרה"
               value={money(
-                actualIncome - actualExpenses
+                actualIncome -
+                  actualExpenses
               )}
               tone={
-                actualIncome - actualExpenses >= 0
+                actualIncome -
+                  actualExpenses >=
+                0
                   ? "positive"
                   : "negative"
               }
@@ -2177,19 +3428,27 @@ export default function BudgetApp() {
 
             <Stat
               title="קבועות מתוכננות"
-              value={money(plannedFixed)}
+              value={money(
+                plannedFixed
+              )}
               subtitle={`${pendingRecurring.length} ממתינות לחיוב`}
             />
           </section>
 
           <div className="two-columns">
             <Panel title="קבועות מול משתנות">
-              <Bars data={typeChart} />
+              <Bars
+                data={typeChart}
+              />
             </Panel>
 
             <Panel title="הוצאות לפי קטגוריה">
               {categoryChart.length ? (
-                <Bars data={categoryChart} />
+                <Bars
+                  data={
+                    categoryChart
+                  }
+                />
               ) : (
                 <Empty text="אין עדיין הוצאות בפועל בחודש הזה." />
               )}
@@ -2202,34 +3461,46 @@ export default function BudgetApp() {
                 <div className="fixed-list">
                   {pendingRecurring
                     .slice(0, 6)
-                    .map((item) => (
-                      <div
-                        className="fixed-item"
-                        key={item.id}
-                      >
-                        <div>
-                          <strong>
-                            {item.name}
-                          </strong>
-
-                          <small>
-                            יום {item.day_of_month} ·{" "}
-                            {money(
-                              item.planned_amount
-                            )}
-                          </small>
-                        </div>
-
-                        <button
-                          className="small primary"
-                          onClick={() =>
-                            chargeRecurring(item)
+                    .map(
+                      (item) => (
+                        <div
+                          className="fixed-item"
+                          key={
+                            item.id
                           }
                         >
-                          סימון כחויבה
-                        </button>
-                      </div>
-                    ))}
+                          <div>
+                            <strong>
+                              {
+                                item.name
+                              }
+                            </strong>
+
+                            <small>
+                              יום{" "}
+                              {
+                                item.day_of_month
+                              }{" "}
+                              ·{" "}
+                              {money(
+                                item.planned_amount
+                              )}
+                            </small>
+                          </div>
+
+                          <button
+                            className="small primary"
+                            onClick={() =>
+                              chargeRecurring(
+                                item
+                              )
+                            }
+                          >
+                            סימון כחויבה
+                          </button>
+                        </div>
+                      )
+                    )}
                 </div>
               ) : (
                 <Empty text="כל ההוצאות הקבועות סומנו כחויבות." />
@@ -2239,44 +3510,54 @@ export default function BudgetApp() {
             <Panel title="תנועות אחרונות">
               {transactions
                 .slice(0, 7)
-                .map((transaction) => (
-                  <div
-                    className="recent-row clickable-row"
-                    key={transaction.id}
-                    onClick={() =>
-                      setDetailsTx(transaction)
-                    }
-                  >
-                    <div>
-                      <strong>
-                        {transaction.description}
-                      </strong>
-
-                      <small>
-                        {dateText(
-                          transaction.transaction_date
-                        )}
-                      </small>
-                    </div>
-
-                    <strong
-                      className={
-                        transaction.kind ===
-                        "income"
-                          ? "positive"
-                          : "negative"
+                .map(
+                  (
+                    transaction
+                  ) => (
+                    <div
+                      className="recent-row clickable-row"
+                      key={
+                        transaction.id
+                      }
+                      onClick={() =>
+                        setDetailsTx(
+                          transaction
+                        )
                       }
                     >
-                      {transaction.kind ===
-                      "income"
-                        ? "+"
-                        : "-"}
-                      {money(
-                        transaction.actual_amount
-                      )}
-                    </strong>
-                  </div>
-                ))}
+                      <div>
+                        <strong>
+                          {
+                            transaction.description
+                          }
+                        </strong>
+
+                        <small>
+                          {dateText(
+                            transaction.transaction_date
+                          )}
+                        </small>
+                      </div>
+
+                      <strong
+                        className={
+                          transaction.kind ===
+                          "income"
+                            ? "positive"
+                            : "negative"
+                        }
+                      >
+                        {transaction.kind ===
+                        "income"
+                          ? "+"
+                          : "-"}
+                        {money(
+                          transaction.actual_amount
+                        )}
+                      </strong>
+                    </div>
+                  )
+                )}
 
               {!transactions.length && (
                 <Empty text="אין תנועות בחודש הזה." />
@@ -2290,27 +3571,38 @@ export default function BudgetApp() {
           EXPENSES
       =================================================== */}
 
-      {tab === "expenses" && (
+      {tab ===
+        "expenses" && (
         <section className="panel">
           <div className="panel-head">
             <div>
-              <h2>הוצאות</h2>
+              <h2>
+                הוצאות
+              </h2>
+
               <p>
-                הוצאות בפועל בחודש הנבחר
+                הוצאות בפועל בחודש
+                הנבחר
               </p>
             </div>
 
             <button
               className="primary"
-              onClick={() => openTx()}
+              onClick={() =>
+                openTx()
+              }
             >
               ＋ הוצאה
             </button>
           </div>
 
           <TransactionList
-            transactions={expenseTx}
-            onOpen={setDetailsTx}
+            transactions={
+              expenseTx
+            }
+            onOpen={
+              setDetailsTx
+            }
           />
         </section>
       )}
@@ -2323,11 +3615,15 @@ export default function BudgetApp() {
         <section className="panel">
           <div className="panel-head">
             <div>
-              <h2>הוצאות קבועות</h2>
+              <h2>
+                הוצאות קבועות
+              </h2>
 
               <p>
-                מתוכנן ובפועל. חיוב בפועל נכנס
-                להוצאות רק לאחר סימון כחויב.
+                מתוכנן ובפועל.
+                חיוב בפועל נכנס
+                להוצאות רק לאחר
+                סימון כחויב.
               </p>
             </div>
 
@@ -2344,119 +3640,141 @@ export default function BudgetApp() {
           <div className="fixed-summary">
             <Stat
               title="מתוכנן"
-              value={money(plannedFixed)}
+              value={money(
+                plannedFixed
+              )}
             />
 
             <Stat
               title="בפועל"
-              value={money(fixedActual)}
+              value={money(
+                fixedActual
+              )}
               tone="negative"
             />
 
             <Stat
               title="ממתין"
-              value={money(pendingPlanned)}
+              value={money(
+                pendingPlanned
+              )}
             />
           </div>
 
           <div className="fixed-list large">
-            {recurring.map((item) => {
-              const charged =
-                chargedRecurringIds.has(
-                  item.id
-                );
+            {recurring.map(
+              (item) => {
+                const charged =
+                  chargedRecurringIds.has(
+                    item.id
+                  );
 
-              const transaction =
-                expenseTx.find(
-                  (t) =>
-                    t.recurring_expense_id ===
-                      item.id &&
-                    t.recurring_month ===
-                      month
-                );
+                const transaction =
+                  expenseTx.find(
+                    (t) =>
+                      t.recurring_expense_id ===
+                        item.id &&
+                      t.recurring_month ===
+                        month
+                  );
 
-              const actual =
-                transaction?.actual_amount;
+                const actual =
+                  transaction?.actual_amount;
 
-              return (
-                <div
-                  className="fixed-card"
-                  key={item.id}
-                >
-                  <div className="fixed-main">
-                    <strong>
-                      {item.name}
-                    </strong>
+                return (
+                  <div
+                    className="fixed-card"
+                    key={
+                      item.id
+                    }
+                  >
+                    <div className="fixed-main">
+                      <strong>
+                        {item.name}
+                      </strong>
 
-                    <span>
-                      {categoryMap[
-                        item.category_id
-                      ] || "ללא קטגוריה"}{" "}
-                      · יום{" "}
-                      {item.day_of_month}
-                    </span>
-                  </div>
-
-                  <div className="amounts">
-                    <span>
-                      מתוכנן
-                      <b>
-                        {money(
-                          item.planned_amount
-                        )}
-                      </b>
-                    </span>
-
-                    <span>
-                      בפועל
-                      <b>
-                        {charged
-                          ? money(actual)
-                          : "—"}
-                      </b>
-                    </span>
-                  </div>
-
-                  <div className="row-actions">
-                    {charged ? (
-                      <span className="badge success">
-                        חויבה
+                      <span>
+                        {categoryMap[
+                          item.category_id
+                        ] ||
+                          "ללא קטגוריה"}{" "}
+                        · יום{" "}
+                        {
+                          item.day_of_month
+                        }
                       </span>
-                    ) : (
+                    </div>
+
+                    <div className="amounts">
+                      <span>
+                        מתוכנן
+
+                        <b>
+                          {money(
+                            item.planned_amount
+                          )}
+                        </b>
+                      </span>
+
+                      <span>
+                        בפועל
+
+                        <b>
+                          {charged
+                            ? money(
+                                actual
+                              )
+                            : "—"}
+                        </b>
+                      </span>
+                    </div>
+
+                    <div className="row-actions">
+                      {charged ? (
+                        <span className="badge success">
+                          חויבה
+                        </span>
+                      ) : (
+                        <button
+                          className="small primary"
+                          onClick={() =>
+                            chargeRecurring(
+                              item
+                            )
+                          }
+                        >
+                          סימון כחויבה
+                        </button>
+                      )}
+
                       <button
-                        className="small primary"
+                        className="icon"
                         onClick={() =>
-                          chargeRecurring(item)
+                          openRecurring(
+                            item
+                          )
                         }
                       >
-                        סימון כחויבה
+                        ✎
                       </button>
-                    )}
 
-                    <button
-                      className="icon"
-                      onClick={() =>
-                        openRecurring(item)
-                      }
-                    >
-                      ✎
-                    </button>
-
-                    <button
-                      className="icon danger"
-                      onClick={() =>
-                        setConfirm({
-                          type: "recurring",
-                          item,
-                        })
-                      }
-                    >
-                      ×
-                    </button>
+                      <button
+                        className="icon danger"
+                        onClick={() =>
+                          setConfirm({
+                            type:
+                              "recurring",
+                            item,
+                          })
+                        }
+                      >
+                        ×
+                      </button>
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              }
+            )}
 
             {!recurring.length && (
               <Empty text="עדיין לא הוגדרו הוצאות קבועות." />
@@ -2469,21 +3787,28 @@ export default function BudgetApp() {
           INCOME
       =================================================== */}
 
-      {tab === "income" && (
+      {tab ===
+        "income" && (
         <section className="panel">
           <div className="panel-head">
             <div>
-              <h2>הכנסות</h2>
+              <h2>
+                הכנסות
+              </h2>
 
               <p>
-                הכנסות בפועל בחודש הנבחר
+                הכנסות בפועל בחודש
+                הנבחר
               </p>
             </div>
 
             <button
               className="primary"
               onClick={() =>
-                openTx(null, "income")
+                openTx(
+                  null,
+                  "income"
+                )
               }
             >
               ＋ הכנסה
@@ -2491,8 +3816,12 @@ export default function BudgetApp() {
           </div>
 
           <TransactionList
-            transactions={incomeTx}
-            onOpen={setDetailsTx}
+            transactions={
+              incomeTx
+            }
+            onOpen={
+              setDetailsTx
+            }
           />
         </section>
       )}
@@ -2501,21 +3830,29 @@ export default function BudgetApp() {
           CREDIT IMPORT
       =================================================== */}
 
-      {tab === "import" && (
+      {tab ===
+        "import" && (
         <section className="panel">
           <div className="panel-head">
             <div>
-              <h2>יבוא עסקאות אשראי</h2>
+              <h2>
+                יבוא עסקאות
+                אשראי
+              </h2>
 
               <p>
-                העלאת קובץ מישראכרט או כאל
-                והוספת העסקאות לחשבון המשפחתי.
+                העלאת קובץ
+                מישראכרט או כאל
+                והוספת העסקאות
+                לחשבון המשפחתי.
               </p>
             </div>
 
             <button
               className="ghost"
-              onClick={resetImport}
+              onClick={
+                resetImport
+              }
             >
               ניקוי
             </button>
@@ -2528,20 +3865,26 @@ export default function BudgetApp() {
               </strong>
 
               <span>
-                ישראכרט: 2091 · 1710 · 4419
+                ישראכרט: 2091 ·
+                1710 · 4419
               </span>
 
               <span>
-                כאל: 2109 · 2091
+                כאל: 2109 ·
+                2091
               </span>
             </div>
 
             <div>
-              <strong>חשוב</strong>
+              <strong>
+                חשוב
+              </strong>
 
               <span>
-                בקובץ האשראי אנחנו משתמשים
-                ב"סכום חיוב" כסכום בפועל.
+                בקובץ האשראי
+                אנחנו משתמשים
+                ב"סכום חיוב"
+                כסכום בפועל.
               </span>
             </div>
           </div>
@@ -2557,8 +3900,12 @@ export default function BudgetApp() {
               <input
                 type="file"
                 accept=".csv,text/csv,.txt"
-                onChange={handleCreditFile}
-                disabled={importLoading}
+                onChange={
+                  handleCreditFile
+                }
+                disabled={
+                  importLoading
+                }
               />
             </label>
 
@@ -2567,7 +3914,9 @@ export default function BudgetApp() {
                 חברת אשראי
 
                 <select
-                  value={importProvider}
+                  value={
+                    importProvider
+                  }
                   onChange={(e) =>
                     setImportProvider(
                       e.target.value
@@ -2596,7 +3945,9 @@ export default function BudgetApp() {
 
               <input
                 type="date"
-                value={importFromDate}
+                value={
+                  importFromDate
+                }
                 onChange={(e) =>
                   setImportFromDate(
                     e.target.value
@@ -2610,7 +3961,9 @@ export default function BudgetApp() {
 
               <input
                 type="date"
-                value={importToDate}
+                value={
+                  importToDate
+                }
                 onChange={(e) =>
                   setImportToDate(
                     e.target.value
@@ -2623,8 +3976,12 @@ export default function BudgetApp() {
               type="button"
               className="ghost small"
               onClick={() => {
-                setImportFromDate("");
-                setImportToDate("");
+                setImportFromDate(
+                  ""
+                );
+                setImportToDate(
+                  ""
+                );
               }}
             >
               נקה סינון
@@ -2633,7 +3990,9 @@ export default function BudgetApp() {
 
           {importDateRangeError && (
             <div className="error">
-              {importDateRangeError}
+              {
+                importDateRangeError
+              }
             </div>
           )}
 
@@ -2690,13 +4049,17 @@ export default function BudgetApp() {
             </div>
           )}
 
-          {filteredImportRows.length > 0 && (
+          {filteredImportRows.length >
+            0 && (
             <>
               <div className="import-toolbar">
                 <div>
                   <strong>
                     נבחרו{" "}
-                    {selectedImportCount} עסקאות
+                    {
+                      selectedImportCount
+                    }{" "}
+                    עסקאות
                   </strong>
 
                   <span>
@@ -2752,11 +4115,21 @@ export default function BudgetApp() {
                       <th>✓</th>
                       <th>תאריך</th>
                       <th>בית עסק</th>
-                      <th>סכום בפועל</th>
-                      <th>קטגוריה</th>
-                      <th>סוג</th>
-                      <th>כרטיס</th>
-                      <th>סטטוס</th>
+                      <th>
+                        סכום בפועל
+                      </th>
+                      <th>
+                        קטגוריה
+                      </th>
+                      <th>
+                        סוג
+                      </th>
+                      <th>
+                        כרטיס
+                      </th>
+                      <th>
+                        סטטוס
+                      </th>
                     </tr>
                   </thead>
 
@@ -2764,7 +4137,9 @@ export default function BudgetApp() {
                     {filteredImportRows.map(
                       (row) => (
                         <tr
-                          key={row.id}
+                          key={
+                            row.id
+                          }
                           className={
                             row.duplicate
                               ? "import-duplicate"
@@ -2799,7 +4174,9 @@ export default function BudgetApp() {
 
                           <td>
                             <strong>
-                              {row.merchant}
+                              {
+                                row.merchant
+                              }
                             </strong>
                           </td>
 
@@ -2815,10 +4192,13 @@ export default function BudgetApp() {
                                 row.category_id ||
                                 ""
                               }
-                              onChange={(e) =>
+                              onChange={(
+                                e
+                              ) =>
                                 changeImportCategory(
                                   row.id,
-                                  e.target.value
+                                  e.target
+                                    .value
                                 )
                               }
                               disabled={
@@ -2830,7 +4210,9 @@ export default function BudgetApp() {
                               </option>
 
                               {categories.map(
-                                (category) => (
+                                (
+                                  category
+                                ) => (
                                   <option
                                     key={
                                       category.id
@@ -2853,10 +4235,13 @@ export default function BudgetApp() {
                               value={
                                 row.expense_type
                               }
-                              onChange={(e) =>
+                              onChange={(
+                                e
+                              ) =>
                                 changeImportType(
                                   row.id,
-                                  e.target.value
+                                  e.target
+                                    .value
                                 )
                               }
                               disabled={
@@ -2909,8 +4294,10 @@ export default function BudgetApp() {
             </>
           )}
 
-          {importPreview.length > 0 &&
-            filteredImportRows.length === 0 &&
+          {importPreview.length >
+            0 &&
+            filteredImportRows.length ===
+              0 &&
             !importDateRangeError && (
               <Empty text="אין עסקאות בטווח התאריכים שנבחר." />
             )}
@@ -2926,121 +4313,157 @@ export default function BudgetApp() {
           CATEGORIES
       =================================================== */}
 
-      {tab === "categories" && (
+      {tab ===
+        "categories" && (
         <section className="panel">
           <div className="panel-head">
             <div>
-              <h2>קטגוריות</h2>
+              <h2>
+                קטגוריות
+              </h2>
 
               <p>
-                ניתן להוסיף, לשנות ולמחוק קטגוריות.
+                ניתן להוסיף,
+                לשנות ולמחוק
+                קטגוריות.
               </p>
             </div>
           </div>
 
           <div className="category-add">
             <input
-              value={newCategory}
+              value={
+                newCategory
+              }
               onChange={(e) =>
-                setNewCategory(e.target.value)
+                setNewCategory(
+                  e.target.value
+                )
               }
               placeholder="שם קטגוריה חדשה"
             />
 
             <button
               className="primary"
-              onClick={addCategory}
-              disabled={saving}
+              onClick={
+                addCategory
+              }
+              disabled={
+                saving
+              }
             >
               הוספה
             </button>
           </div>
 
           <div className="category-grid">
-            {categories.map((category) => (
-              <div
-                className="category-card"
-                key={category.id}
-              >
-                {editingCategory?.id ===
-                category.id ? (
-                  <div className="category-edit">
-                    <input
-                      autoFocus
-                      value={categoryNameForm}
-                      onChange={(e) =>
-                        setCategoryNameForm(
-                          e.target.value
-                        )
-                      }
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          saveCategoryName();
+            {categories.map(
+              (category) => (
+                <div
+                  className="category-card"
+                  key={
+                    category.id
+                  }
+                >
+                  {editingCategory?.id ===
+                  category.id ? (
+                    <div className="category-edit">
+                      <input
+                        autoFocus
+                        value={
+                          categoryNameForm
                         }
-
-                        if (e.key === "Escape") {
-                          cancelEditCategory();
-                        }
-                      }}
-                    />
-
-                    <div className="row-actions">
-                      <button
-                        className="small primary"
-                        onClick={
-                          saveCategoryName
-                        }
-                        disabled={saving}
-                      >
-                        שמירה
-                      </button>
-
-                      <button
-                        className="ghost small"
-                        onClick={
-                          cancelEditCategory
-                        }
-                      >
-                        ביטול
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <strong>
-                      {category.name}
-                    </strong>
-
-                    <div className="row-actions">
-                      <button
-                        className="icon"
-                        title="שינוי שם"
-                        onClick={() =>
-                          startEditCategory(
-                            category
+                        onChange={(
+                          e
+                        ) =>
+                          setCategoryNameForm(
+                            e.target
+                              .value
                           )
                         }
-                      >
-                        ✎
-                      </button>
+                        onKeyDown={(
+                          e
+                        ) => {
+                          if (
+                            e.key ===
+                            "Enter"
+                          ) {
+                            saveCategoryName();
+                          }
 
-                      <button
-                        className="icon danger"
-                        title="מחיקת קטגוריה"
-                        onClick={() =>
-                          setConfirm({
-                            type: "category",
-                            item: category,
-                          })
-                        }
-                      >
-                        ×
-                      </button>
+                          if (
+                            e.key ===
+                            "Escape"
+                          ) {
+                            cancelEditCategory();
+                          }
+                        }}
+                      />
+
+                      <div className="row-actions">
+                        <button
+                          className="small primary"
+                          onClick={
+                            saveCategoryName
+                          }
+                          disabled={
+                            saving
+                          }
+                        >
+                          שמירה
+                        </button>
+
+                        <button
+                          className="ghost small"
+                          onClick={
+                            cancelEditCategory
+                          }
+                        >
+                          ביטול
+                        </button>
+                      </div>
                     </div>
-                  </>
-                )}
-              </div>
-            ))}
+                  ) : (
+                    <>
+                      <strong>
+                        {
+                          category.name
+                        }
+                      </strong>
+
+                      <div className="row-actions">
+                        <button
+                          className="icon"
+                          title="שינוי שם"
+                          onClick={() =>
+                            startEditCategory(
+                              category
+                            )
+                          }
+                        >
+                          ✎
+                        </button>
+
+                        <button
+                          className="icon danger"
+                          title="מחיקת קטגוריה"
+                          onClick={() =>
+                            setConfirm({
+                              type:
+                                "category",
+                              item:
+                                category,
+                            })
+                          }
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )
+            )}
           </div>
 
           {!categories.length && (
@@ -3056,7 +4479,8 @@ export default function BudgetApp() {
       {detailsTx && (
         <Modal
           title={
-            detailsTx.kind === "income"
+            detailsTx.kind ===
+            "income"
               ? "פרטי הכנסה"
               : "פרטי הוצאה"
           }
@@ -3067,7 +4491,9 @@ export default function BudgetApp() {
           <div className="transaction-details">
             <div className="detail-main">
               <strong>
-                {detailsTx.description}
+                {
+                  detailsTx.description
+                }
               </strong>
 
               <span
@@ -3101,7 +4527,8 @@ export default function BudgetApp() {
                 value={
                   categoryMap[
                     detailsTx.category_id
-                  ] || "ללא קטגוריה"
+                  ] ||
+                  "ללא קטגוריה"
                 }
               />
 
@@ -3135,7 +4562,8 @@ export default function BudgetApp() {
                 value={
                   memberMap[
                     detailsTx.person_user_id
-                  ] || "לא צוין"
+                  ] ||
+                  "לא צוין"
                 }
               />
 
@@ -3173,9 +4601,14 @@ export default function BudgetApp() {
 
             {detailsTx.note && (
               <div className="detail-note">
-                <span>הערה</span>
+                <span>
+                  הערה
+                </span>
+
                 <p>
-                  {detailsTx.note}
+                  {
+                    detailsTx.note
+                  }
                 </p>
               </div>
             )}
@@ -3184,7 +4617,9 @@ export default function BudgetApp() {
               <button
                 className="ghost"
                 onClick={() => {
-                  setDetailsTx(null);
+                  setDetailsTx(
+                    null
+                  );
 
                   openTx(
                     detailsTx,
@@ -3203,7 +4638,8 @@ export default function BudgetApp() {
                 onClick={() =>
                   setConfirm({
                     type: "tx",
-                    item: detailsTx,
+                    item:
+                      detailsTx,
                   })
                 }
               >
@@ -3221,32 +4657,45 @@ export default function BudgetApp() {
       {modal && (
         <Modal
           title={
-            modal === "recurring"
+            modal ===
+            "recurring"
               ? editingRecurring
                 ? "עריכת הוצאה קבועה"
                 : "הוצאה קבועה חדשה"
               : editingTx
               ? "עריכת תנועה"
-              : modal === "income"
+              : modal ===
+                "income"
               ? "הכנסה חדשה"
               : "הוצאה חדשה"
           }
-          onClose={closeModal}
+          onClose={
+            closeModal
+          }
         >
-          {modal === "recurring" ? (
+          {modal ===
+          "recurring" ? (
             <form
               className="form"
-              onSubmit={saveRecurring}
+              onSubmit={
+                saveRecurring
+              }
             >
               <label>
                 שם ההוצאה
 
                 <input
-                  value={recForm.name}
-                  onChange={(e) =>
+                  value={
+                    recForm.name
+                  }
+                  onChange={(
+                    e
+                  ) =>
                     setRecForm({
                       ...recForm,
-                      name: e.target.value,
+                      name: e
+                        .target
+                        .value,
                     })
                   }
                 />
@@ -3259,11 +4708,14 @@ export default function BudgetApp() {
                   value={
                     recForm.category_id
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setRecForm({
                       ...recForm,
                       category_id:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 >
@@ -3272,7 +4724,9 @@ export default function BudgetApp() {
                   </option>
 
                   {categories.map(
-                    (category) => (
+                    (
+                      category
+                    ) => (
                       <option
                         key={
                           category.id
@@ -3301,11 +4755,14 @@ export default function BudgetApp() {
                     value={
                       recForm.planned_amount
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setRecForm({
                         ...recForm,
                         planned_amount:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
@@ -3321,11 +4778,14 @@ export default function BudgetApp() {
                     value={
                       recForm.day_of_month
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setRecForm({
                         ...recForm,
                         day_of_month:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
@@ -3336,12 +4796,17 @@ export default function BudgetApp() {
                 בית עסק
 
                 <input
-                  value={recForm.merchant}
-                  onChange={(e) =>
+                  value={
+                    recForm.merchant
+                  }
+                  onChange={(
+                    e
+                  ) =>
                     setRecForm({
                       ...recForm,
                       merchant:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 />
@@ -3354,11 +4819,14 @@ export default function BudgetApp() {
                   value={
                     recForm.payment_method
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setRecForm({
                       ...recForm,
                       payment_method:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 >
@@ -3399,11 +4867,14 @@ export default function BudgetApp() {
                   value={
                     recForm.person_user_id
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setRecForm({
                       ...recForm,
                       person_user_id:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 >
@@ -3412,10 +4883,16 @@ export default function BudgetApp() {
                   </option>
 
                   {profiles.map(
-                    (profile) => (
+                    (
+                      profile
+                    ) => (
                       <option
-                        key={profile.id}
-                        value={profile.id}
+                        key={
+                          profile.id
+                        }
+                        value={
+                          profile.id
+                        }
                       >
                         {
                           profile.display_name
@@ -3431,11 +4908,16 @@ export default function BudgetApp() {
 
                 <textarea
                   rows="3"
-                  value={recForm.note}
-                  onChange={(e) =>
+                  value={
+                    recForm.note
+                  }
+                  onChange={(
+                    e
+                  ) =>
                     setRecForm({
                       ...recForm,
-                      note: e.target.value,
+                      note: e.target
+                        .value,
                     })
                   }
                 />
@@ -3451,14 +4933,18 @@ export default function BudgetApp() {
                 <button
                   type="button"
                   className="ghost"
-                  onClick={closeModal}
+                  onClick={
+                    closeModal
+                  }
                 >
                   ביטול
                 </button>
 
                 <button
                   className="primary"
-                  disabled={saving}
+                  disabled={
+                    saving
+                  }
                 >
                   {saving
                     ? "שומר..."
@@ -3472,7 +4958,8 @@ export default function BudgetApp() {
               onSubmit={saveTx}
             >
               <label>
-                {modal === "income"
+                {modal ===
+                "income"
                   ? "מקור ההכנסה"
                   : "תיאור"}
 
@@ -3480,17 +4967,21 @@ export default function BudgetApp() {
                   value={
                     txForm.description
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setTxForm({
                       ...txForm,
                       description:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 />
               </label>
 
-              {modal !== "income" && (
+              {modal !==
+                "income" && (
                 <label>
                   סוג הוצאה
 
@@ -3498,11 +4989,14 @@ export default function BudgetApp() {
                     value={
                       txForm.expense_type
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setTxForm({
                         ...txForm,
                         expense_type:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   >
@@ -3524,11 +5018,14 @@ export default function BudgetApp() {
                   value={
                     txForm.category_id
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setTxForm({
                       ...txForm,
                       category_id:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 >
@@ -3537,7 +5034,9 @@ export default function BudgetApp() {
                   </option>
 
                   {categories.map(
-                    (category) => (
+                    (
+                      category
+                    ) => (
                       <option
                         key={
                           category.id
@@ -3555,7 +5054,8 @@ export default function BudgetApp() {
                 </select>
               </label>
 
-              {modal !== "income" &&
+              {modal !==
+                "income" &&
                 txForm.expense_type ===
                   "fixed" && (
                   <label>
@@ -3568,11 +5068,14 @@ export default function BudgetApp() {
                       value={
                         txForm.planned_amount
                       }
-                      onChange={(e) =>
+                      onChange={(
+                        e
+                      ) =>
                         setTxForm({
                           ...txForm,
                           planned_amount:
-                            e.target.value,
+                            e.target
+                              .value,
                         })
                       }
                     />
@@ -3589,15 +5092,19 @@ export default function BudgetApp() {
                   value={
                     txForm.actual_amount
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setTxForm({
                       ...txForm,
                       actual_amount:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                   placeholder={
-                    modal === "income"
+                    modal ===
+                    "income"
                       ? ""
                       : "השאירי ריק אם טרם חויב"
                   }
@@ -3613,11 +5120,14 @@ export default function BudgetApp() {
                     value={
                       txForm.transaction_date
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setTxForm({
                         ...txForm,
                         transaction_date:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
@@ -3630,11 +5140,14 @@ export default function BudgetApp() {
                     value={
                       txForm.person_user_id
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setTxForm({
                         ...txForm,
                         person_user_id:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   >
@@ -3643,7 +5156,9 @@ export default function BudgetApp() {
                     </option>
 
                     {profiles.map(
-                      (profile) => (
+                      (
+                        profile
+                      ) => (
                         <option
                           key={
                             profile.id
@@ -3670,11 +5185,14 @@ export default function BudgetApp() {
                     value={
                       txForm.merchant
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setTxForm({
                         ...txForm,
                         merchant:
-                          e.target.value,
+                          e.target
+                            .value,
                       })
                     }
                   />
@@ -3689,16 +5207,21 @@ export default function BudgetApp() {
                     value={
                       txForm.credit_card_last4
                     }
-                    onChange={(e) =>
+                    onChange={(
+                      e
+                    ) =>
                       setTxForm({
                         ...txForm,
                         credit_card_last4:
-                          e.target.value
+                          e.target
+                            .value
                             .replace(
                               /\D/g,
                               ""
                             )
-                            .slice(-4),
+                            .slice(
+                              -4
+                            ),
                       })
                     }
                   />
@@ -3712,11 +5235,14 @@ export default function BudgetApp() {
                   value={
                     txForm.credit_card_provider
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setTxForm({
                       ...txForm,
                       credit_card_provider:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 >
@@ -3741,11 +5267,14 @@ export default function BudgetApp() {
                   value={
                     txForm.payment_method
                   }
-                  onChange={(e) =>
+                  onChange={(
+                    e
+                  ) =>
                     setTxForm({
                       ...txForm,
                       payment_method:
-                        e.target.value,
+                        e.target
+                          .value,
                     })
                   }
                 >
@@ -3784,11 +5313,16 @@ export default function BudgetApp() {
 
                 <textarea
                   rows="3"
-                  value={txForm.note}
-                  onChange={(e) =>
+                  value={
+                    txForm.note
+                  }
+                  onChange={(
+                    e
+                  ) =>
                     setTxForm({
                       ...txForm,
-                      note: e.target.value,
+                      note: e.target
+                        .value,
                     })
                   }
                 />
@@ -3804,14 +5338,18 @@ export default function BudgetApp() {
                 <button
                   type="button"
                   className="ghost"
-                  onClick={closeModal}
+                  onClick={
+                    closeModal
+                  }
                 >
                   ביטול
                 </button>
 
                 <button
                   className="primary"
-                  disabled={saving}
+                  disabled={
+                    saving
+                  }
                 >
                   {saving
                     ? "שומר..."
@@ -3847,8 +5385,9 @@ export default function BudgetApp() {
           {confirm.type ===
             "category" && (
             <p className="muted">
-              אם הקטגוריה משויכת לתנועות,
-              המחיקה לא תתבצע.
+              אם הקטגוריה משויכת
+              לתנועות, המחיקה לא
+              תתבצע.
             </p>
           )}
 
@@ -3910,7 +5449,9 @@ function Stat({
 }) {
   return (
     <div className="stat">
-      <span>{title}</span>
+      <span>
+        {title}
+      </span>
 
       <strong className={tone}>
         {value}
@@ -3932,7 +5473,9 @@ function Panel({
   return (
     <section className="panel">
       <div className="panel-head">
-        <h2>{title}</h2>
+        <h2>
+          {title}
+        </h2>
       </div>
 
       {children}
@@ -3950,43 +5493,55 @@ function Empty({ text }) {
 
 function Bars({ data }) {
   const max = Math.max(
-    ...data.map((item) => item.value),
+    ...data.map(
+      (item) => item.value
+    ),
     1
   );
 
   return (
     <div className="chart-list">
-      {data.map((item) => (
-        <div
-          className="chart-row"
-          key={item.label}
-        >
-          <div className="chart-label">
-            {item.label}
-          </div>
+      {data.map(
+        (item) => (
+          <div
+            className="chart-row"
+            key={
+              item.label
+            }
+          >
+            <div className="chart-label">
+              {
+                item.label
+              }
+            </div>
 
-          <div className="chart-track">
-            <div
-              className="chart-bar"
-              style={{
-                width: `${
-                  (item.value / max) * 100
-                }%`,
-              }}
-            />
-          </div>
+            <div className="chart-track">
+              <div
+                className="chart-bar"
+                style={{
+                  width: `${
+                    (item.value /
+                      max) *
+                    100
+                  }%`,
+                }}
+              />
+            </div>
 
-          <strong>
-            {money(item.value)}
-          </strong>
-        </div>
-      ))}
+            <strong>
+              {money(
+                item.value
+              )}
+            </strong>
+          </div>
+        )
+      )}
     </div>
   );
 }
 
 /* =========================================================
-   CLEAN TRANSACTION LIST
+   TRANSACTION LIST
 ========================================================= */
 
 function TransactionList({
@@ -3995,43 +5550,51 @@ function TransactionList({
 }) {
   return (
     <div className="transaction-list">
-      {transactions.map((transaction) => (
-        <button
-          type="button"
-          className="transaction-list-row"
-          key={transaction.id}
-          onClick={() =>
-            onOpen(transaction)
-          }
-        >
-          <span className="transaction-date">
-            {dateText(
-              transaction.transaction_date
-            )}
-          </span>
-
-          <span className="transaction-description">
-            {transaction.description}
-          </span>
-
-          <strong
-            className={
-              transaction.kind ===
-              "income"
-                ? "positive"
-                : "negative"
+      {transactions.map(
+        (transaction) => (
+          <button
+            type="button"
+            className="transaction-list-row"
+            key={
+              transaction.id
+            }
+            onClick={() =>
+              onOpen(
+                transaction
+              )
             }
           >
-            {transaction.kind ===
-            "income"
-              ? "+"
-              : "-"}
-            {money(
-              transaction.actual_amount
-            )}
-          </strong>
-        </button>
-      ))}
+            <span className="transaction-date">
+              {dateText(
+                transaction.transaction_date
+              )}
+            </span>
+
+            <span className="transaction-description">
+              {
+                transaction.description
+              }
+            </span>
+
+            <strong
+              className={
+                transaction.kind ===
+                "income"
+                  ? "positive"
+                  : "negative"
+              }
+            >
+              {transaction.kind ===
+              "income"
+                ? "+"
+                : "-"}
+              {money(
+                transaction.actual_amount
+              )}
+            </strong>
+          </button>
+        )
+      )}
 
       {!transactions.length && (
         <Empty text="אין תנועות בחודש הזה." />
@@ -4050,8 +5613,13 @@ function Detail({
 }) {
   return (
     <div className="detail-item">
-      <span>{label}</span>
-      <strong>{value}</strong>
+      <span>
+        {label}
+      </span>
+
+      <strong>
+        {value}
+      </strong>
     </div>
   );
 }
@@ -4068,7 +5636,9 @@ function Modal({
   return (
     <div
       className="modal-backdrop"
-      onMouseDown={(event) => {
+      onMouseDown={(
+        event
+      ) => {
         if (
           event.target ===
           event.currentTarget
@@ -4079,12 +5649,16 @@ function Modal({
     >
       <div className="modal">
         <div className="modal-head">
-          <h2>{title}</h2>
+          <h2>
+            {title}
+          </h2>
 
           <button
             type="button"
             className="modal-close"
-            onClick={onClose}
+            onClick={
+              onClose
+            }
           >
             ×
           </button>
@@ -4096,4 +5670,4 @@ function Modal({
       </div>
     </div>
   );
-}
+        }
