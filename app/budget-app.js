@@ -1485,6 +1485,8 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
     minAmount: "",
     maxAmount: "",
     paymentMethod: "",
+    categoryId: "",
+    search: "",
   });
 
   const [sort, setSort] = useState({
@@ -1493,10 +1495,10 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
   });
 
   function toggleSort(key) {
-    setSort((s) => ({
+    setSort((current) => ({
       key,
       direction:
-        s.key === key && s.direction === "asc"
+        current.key === key && current.direction === "asc"
           ? "desc"
           : "asc",
     }));
@@ -1509,37 +1511,101 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
       minAmount: "",
       maxAmount: "",
       paymentMethod: "",
+      categoryId: "",
+      search: "",
     });
+  }
+
+  function paymentMethodName(tx) {
+    if (tx.payment_method === "credit_card") {
+      return "כרטיס אשראי";
+    }
+
+    return (
+      {
+        bank: "חשבון בנק",
+        direct_debit: "הוראת קבע",
+        cash: "מזומן",
+        bit: "ביט",
+        paybox: "פייבוקס",
+        other: "אחר",
+      }[tx.payment_method] || "לא צוין"
+    );
   }
 
   const filtered = useMemo(() => {
     const rows = transactions.filter((t) => {
       const amount = Number(t.actual_amount || 0);
+      const search = filters.search.trim().toLowerCase();
 
-      if (filters.fromDate && t.transaction_date < filters.fromDate)
+      if (
+        filters.fromDate &&
+        t.transaction_date < filters.fromDate
+      ) {
         return false;
+      }
 
-      if (filters.toDate && t.transaction_date > filters.toDate)
+      if (
+        filters.toDate &&
+        t.transaction_date > filters.toDate
+      ) {
         return false;
+      }
 
       if (
         filters.minAmount !== "" &&
         amount < Number(filters.minAmount)
-      )
+      ) {
         return false;
+      }
 
       if (
         filters.maxAmount !== "" &&
         amount > Number(filters.maxAmount)
-      )
+      ) {
         return false;
+      }
 
       if (filters.paymentMethod) {
-        if (filters.paymentMethod === "credit_card") {
-          if (t.payment_method !== "credit_card") return false;
-        } else if (
-          (t.payment_method || "other") !== filters.paymentMethod
+        const actualMethod =
+          t.payment_method || "other";
+
+        if (
+          filters.paymentMethod === "other"
+            ? ![
+                "credit_card",
+                "bank",
+                "direct_debit",
+                "cash",
+                "bit",
+                "paybox",
+              ].includes(actualMethod)
+            : actualMethod !== filters.paymentMethod
         ) {
+          return false;
+        }
+      }
+
+      if (
+        filters.categoryId &&
+        t.category_id !== filters.categoryId
+      ) {
+        return false;
+      }
+
+      if (search) {
+        const searchable = [
+          t.description,
+          t.merchant,
+          t.note,
+          t.credit_card_provider,
+          t.credit_card_last4,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+
+        if (!searchable.includes(search)) {
           return false;
         }
       }
@@ -1551,19 +1617,45 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
       let av;
       let bv;
 
-      if (sort.key === "date") {
-        av = a.transaction_date || "";
-        bv = b.transaction_date || "";
-      } else if (sort.key === "amount") {
-        av = Number(a.actual_amount || 0);
-        bv = Number(b.actual_amount || 0);
-      } else {
-        av = paymentLabel(a);
-        bv = paymentLabel(b);
+      switch (sort.key) {
+        case "date":
+          av = a.transaction_date || "";
+          bv = b.transaction_date || "";
+          break;
+
+        case "amount":
+          av = Number(a.actual_amount || 0);
+          bv = Number(b.actual_amount || 0);
+          break;
+
+        case "description":
+          av = String(a.description || "").toLowerCase();
+          bv = String(b.description || "").toLowerCase();
+          break;
+
+        case "category":
+          av = String(a.category_id || "").toLowerCase();
+          bv = String(b.category_id || "").toLowerCase();
+          break;
+
+        case "payment":
+          av = paymentMethodName(a);
+          bv = paymentMethodName(b);
+          break;
+
+        default:
+          av = a.transaction_date || "";
+          bv = b.transaction_date || "";
       }
 
-      if (av < bv) return sort.direction === "asc" ? -1 : 1;
-      if (av > bv) return sort.direction === "asc" ? 1 : -1;
+      if (av < bv) {
+        return sort.direction === "asc" ? -1 : 1;
+      }
+
+      if (av > bv) {
+        return sort.direction === "asc" ? 1 : -1;
+      }
+
       return 0;
     });
 
@@ -1571,28 +1663,90 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
   }, [transactions, filters, sort]);
 
   const total = filtered.reduce(
-    (s, t) => s + Number(t.actual_amount || 0),
+    (sum, t) => sum + Number(t.actual_amount || 0),
     0
   );
 
-  const summary = useMemo(() => {
-    const map = {};
+  const average = filtered.length
+    ? total / filtered.length
+    : 0;
+
+  /*
+   * הגרף החשוב:
+   * כאן אנחנו מקבצים אך ורק לפי אופן תשלום.
+   *
+   * כלומר:
+   * כל כרטיסי האשראי נכנסים יחד ל"כרטיס אשראי"
+   * ולא מתפצלים לפי 4 ספרות או חברת אשראי.
+   */
+  const paymentSummary = useMemo(() => {
+    const groups = {
+      credit_card: {
+        label: "כרטיס אשראי",
+        value: 0,
+      },
+      bank: {
+        label: "חשבון בנק",
+        value: 0,
+      },
+      direct_debit: {
+        label: "הוראת קבע",
+        value: 0,
+      },
+      cash: {
+        label: "מזומן",
+        value: 0,
+      },
+      bit: {
+        label: "ביט",
+        value: 0,
+      },
+      paybox: {
+        label: "פייבוקס",
+        value: 0,
+      },
+      other: {
+        label: "אחר / לא צוין",
+        value: 0,
+      },
+    };
 
     filtered.forEach((t) => {
-      const key = paymentKey(t);
+      const method = t.payment_method;
 
-      if (!map[key]) {
-        map[key] = {
-          label: paymentLabel(t),
-          value: 0,
-        };
+      if (method === "credit_card") {
+        groups.credit_card.value += Number(
+          t.actual_amount || 0
+        );
+      } else if (method === "bank") {
+        groups.bank.value += Number(t.actual_amount || 0);
+      } else if (method === "direct_debit") {
+        groups.direct_debit.value += Number(
+          t.actual_amount || 0
+        );
+      } else if (method === "cash") {
+        groups.cash.value += Number(t.actual_amount || 0);
+      } else if (method === "bit") {
+        groups.bit.value += Number(t.actual_amount || 0);
+      } else if (method === "paybox") {
+        groups.paybox.value += Number(t.actual_amount || 0);
+      } else {
+        groups.other.value += Number(t.actual_amount || 0);
       }
-
-      map[key].value += Number(t.actual_amount || 0);
     });
 
-    return Object.values(map).sort((a, b) => b.value - a.value);
+    return Object.values(groups)
+      .filter((x) => x.value > 0)
+      .sort((a, b) => b.value - a.value);
   }, [filtered]);
+
+  const maxPaymentValue = Math.max(
+    ...paymentSummary.map((x) => x.value),
+    1
+  );
+
+  const paymentPercent = (value) =>
+    total > 0 ? (value / total) * 100 : 0;
 
   return (
     <section className="panel">
@@ -1600,7 +1754,8 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
         <div>
           <h2>הוצאות</h2>
           <p>
-            {filtered.length} הוצאות · {money(total)}
+            {filtered.length} הוצאות · סה״כ{" "}
+            {money(total)}
           </p>
         </div>
 
@@ -1609,10 +1764,30 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
         </button>
       </div>
 
+      {/* =========================
+          סינון
+         ========================= */}
       <div className="expense-filters">
-        <div className="filter-title">סינון הוצאות</div>
+        <div className="filter-title">
+          סינון הוצאות
+        </div>
 
         <div className="filter-grid">
+          <label>
+            חיפוש
+            <input
+              type="text"
+              placeholder="תיאור / בית עסק / הערה..."
+              value={filters.search}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  search: e.target.value,
+                })
+              }
+            />
+          </label>
+
           <label>
             מתאריך
             <input
@@ -1674,6 +1849,36 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
           </label>
 
           <label>
+            קטגוריה
+            <select
+              value={filters.categoryId}
+              onChange={(e) =>
+                setFilters({
+                  ...filters,
+                  categoryId: e.target.value,
+                })
+              }
+            >
+              <option value="">כל הקטגוריות</option>
+
+              {[
+                ...new Map(
+                  transactions
+                    .filter((t) => t.category_id)
+                    .map((t) => [
+                      t.category_id,
+                      t.category_id,
+                    ])
+                ).values(),
+              ].map((id) => (
+                <option key={id} value={id}>
+                  {id}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
             אופן תשלום
             <select
               value={filters.paymentMethod}
@@ -1684,75 +1889,144 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
                 })
               }
             >
-              <option value="">כל אמצעי התשלום</option>
-              <option value="credit_card">כרטיס אשראי</option>
-              <option value="bank">חשבון בנק</option>
-              <option value="direct_debit">הוראת קבע</option>
-              <option value="cash">מזומן</option>
-              <option value="bit">ביט</option>
-              <option value="paybox">פייבוקס</option>
-              <option value="other">אחר / לא צוין</option>
+              <option value="">
+                כל אמצעי התשלום
+              </option>
+              <option value="credit_card">
+                כרטיס אשראי
+              </option>
+              <option value="bank">
+                חשבון בנק
+              </option>
+              <option value="direct_debit">
+                הוראת קבע
+              </option>
+              <option value="cash">
+                מזומן
+              </option>
+              <option value="bit">
+                ביט
+              </option>
+              <option value="paybox">
+                פייבוקס
+              </option>
+              <option value="other">
+                אחר / לא צוין
+              </option>
             </select>
           </label>
 
-          <button className="ghost filter-reset" onClick={resetFilters}>
+          <button
+            type="button"
+            className="ghost filter-reset"
+            onClick={resetFilters}
+          >
             איפוס סינון
           </button>
         </div>
       </div>
 
-      <div className="payment-summary">
-        <div className="payment-summary-head">
+      {/* =========================
+          סיכום
+         ========================= */}
+      <div className="expense-summary-cards">
+        <div className="expense-summary-card">
+          <span>סה״כ הוצאות</span>
+          <strong>{money(total)}</strong>
+        </div>
+
+        <div className="expense-summary-card">
+          <span>מספר הוצאות</span>
+          <strong>{filtered.length}</strong>
+        </div>
+
+        <div className="expense-summary-card">
+          <span>ממוצע להוצאה</span>
+          <strong>{money(average)}</strong>
+        </div>
+      </div>
+
+      {/* =========================
+          גרף הוצאות לפי אופן תשלום
+         ========================= */}
+      <div className="payment-chart-card">
+        <div className="payment-chart-header">
           <div>
-            <h3>הוצאות לפי אופן תשלום</h3>
-            <p className="muted">
-              הסיכום משתנה בהתאם לסינון
+            <h3>
+              סה״כ הוצאות לפי אופן תשלום
+            </h3>
+
+            <p>
+              הסכומים מתעדכנים אוטומטית לפי הסינון
+              שבחרת.
             </p>
           </div>
 
           <strong>{money(total)}</strong>
         </div>
 
-        {summary.length ? (
-          <div className="payment-chart">
-            {summary.map((item) => (
-              <div className="payment-chart-row" key={item.label}>
-                <div className="payment-chart-label">
-                  <span>{item.label}</span>
-                  <strong>{money(item.value)}</strong>
-                </div>
+        {paymentSummary.length > 0 ? (
+          <div className="payment-chart-list">
+            {paymentSummary.map((item) => {
+              const percent = paymentPercent(
+                item.value
+              );
 
-                <div className="chart-track">
-                  <div
-                    className="chart-bar"
-                    style={{
-                      width: `${
-                        total
-                          ? Math.min(
-                              100,
-                              (item.value / total) * 100
-                            )
-                          : 0
-                      }%`,
-                    }}
-                  />
+              return (
+                <div
+                  className="payment-chart-item"
+                  key={item.label}
+                >
+                  <div className="payment-chart-top">
+                    <span>{item.label}</span>
+
+                    <div>
+                      <strong>
+                        {money(item.value)}
+                      </strong>
+
+                      <small>
+                        {percent.toFixed(1)}%
+                      </small>
+                    </div>
+                  </div>
+
+                  <div className="payment-chart-track">
+                    <div
+                      className="payment-chart-bar"
+                      style={{
+                        width: `${Math.min(
+                          100,
+                          (item.value /
+                            maxPaymentValue) *
+                            100
+                        )}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
-          <Empty text="אין הוצאות בהתאם לסינון." />
+          <Empty text="אין הוצאות להצגה לפי הסינון שבחרת." />
         )}
       </div>
 
+      {/* =========================
+          טבלת הוצאות
+         ========================= */}
       <div className="table-wrap">
         <table className="transactions-table expenses-table">
           <thead>
             <tr>
               <th>
                 <button
+                  type="button"
                   className="sort-button"
-                  onClick={() => toggleSort("date")}
+                  onClick={() =>
+                    toggleSort("date")
+                  }
                 >
                   תאריך
                   <span>
@@ -1767,8 +2041,50 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
 
               <th>
                 <button
+                  type="button"
                   className="sort-button"
-                  onClick={() => toggleSort("amount")}
+                  onClick={() =>
+                    toggleSort("description")
+                  }
+                >
+                  הוצאה
+                  <span>
+                    {sort.key ===
+                    "description"
+                      ? sort.direction === "asc"
+                        ? " ↑"
+                        : " ↓"
+                      : " ↕"}
+                  </span>
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sort-button"
+                  onClick={() =>
+                    toggleSort("category")
+                  }
+                >
+                  קטגוריה
+                  <span>
+                    {sort.key === "category"
+                      ? sort.direction === "asc"
+                        ? " ↑"
+                        : " ↓"
+                        : " ↕"}
+                  </span>
+                </button>
+              </th>
+
+              <th>
+                <button
+                  type="button"
+                  className="sort-button"
+                  onClick={() =>
+                    toggleSort("amount")
+                  }
                 >
                   סכום
                   <span>
@@ -1783,8 +2099,11 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
 
               <th>
                 <button
+                  type="button"
                   className="sort-button"
-                  onClick={() => toggleSort("payment")}
+                  onClick={() =>
+                    toggleSort("payment")
+                  }
                 >
                   אופן תשלום
                   <span>
@@ -1804,15 +2123,37 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
               <tr
                 key={t.id}
                 className="clickable-row"
-                onClick={() => onEdit(t, "expense")}
+                onClick={() =>
+                  onEdit(t, "expense")
+                }
               >
-                <td>{dateText(t.transaction_date)}</td>
+                <td>
+                  {dateText(
+                    t.transaction_date
+                  )}
+                </td>
 
                 <td>
-                  <strong>{money(t.actual_amount)}</strong>
-                  <small className="table-sub">
+                  <strong>
                     {t.description}
-                  </small>
+                  </strong>
+
+                  {t.merchant && (
+                    <small className="table-sub">
+                      {t.merchant}
+                    </small>
+                  )}
+                </td>
+
+                <td>
+                  {t.category_id ||
+                    "ללא קטגוריה"}
+                </td>
+
+                <td>
+                  <strong>
+                    {money(t.actual_amount)}
+                  </strong>
                 </td>
 
                 <td>
@@ -1824,12 +2165,12 @@ function ExpensesView({ transactions, onEdit, onAdd }) {
         </table>
 
         {!filtered.length && (
-          <Empty text="אין הוצאות בהתאם לסינון." />
+          <Empty text="אין הוצאות בהתאם לסינון שבחרת." />
         )}
       </div>
     </section>
   );
-}
+        }
 
 function PaymentDisplay({ tx }) {
   if (tx.payment_method === "credit_card") {
