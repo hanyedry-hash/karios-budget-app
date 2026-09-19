@@ -3172,3 +3172,156 @@ textarea:focus {
     content: none !important;
   }
 }
+/* =========================================================
+   EXPENSE TABLE - MOBILE FINAL
+========================================================= */
+
+@media (max-width: 600px) {
+
+  .table-wrap:has(.expense-table) {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    -webkit-overflow-scrolling: touch !important;
+    direction: rtl !important;
+  }
+
+  .expense-table {
+    width: 680px !important;
+    min-width: 680px !important;
+    max-width: none !important;
+
+    display: table !important;
+    table-layout: fixed !important;
+
+    border-collapse: collapse !important;
+    border-spacing: 0 !important;
+
+    direction: rtl !important;
+  }
+
+  .expense-table thead {
+    display: table-header-group !important;
+  }
+
+  .expense-table tbody {
+    display: table-row-group !important;
+  }
+
+  .expense-table tr {
+    display: table-row !important;
+  }
+
+  .expense-table th,
+  .expense-table td {
+    display: table-cell !important;
+
+    box-sizing: border-box !important;
+
+    padding: 9px 8px !important;
+
+    font-size: 12px !important;
+    line-height: 1.35 !important;
+
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+
+    text-align: right !important;
+    vertical-align: middle !important;
+
+    border-bottom: 1px solid #e8ebf0 !important;
+  }
+
+  .expense-table th {
+    background: #fff !important;
+    font-weight: 700 !important;
+    color: #737d8e !important;
+  }
+
+  /* תאריך */
+  .expense-table th:nth-child(1),
+  .expense-table td:nth-child(1) {
+    width: 105px !important;
+  }
+
+  /* תיאור */
+  .expense-table th:nth-child(2),
+  .expense-table td:nth-child(2) {
+    width: 190px !important;
+  }
+
+  /* סכום */
+  .expense-table th:nth-child(3),
+  .expense-table td:nth-child(3) {
+    width: 90px !important;
+    text-align: center !important;
+  }
+
+  /* אופן תשלום */
+  .expense-table th:nth-child(4),
+  .expense-table td:nth-child(4) {
+    width: 160px !important;
+  }
+
+  /* 4 ספרות */
+  .expense-table th:nth-child(5),
+  .expense-table td:nth-child(5) {
+    width: 135px !important;
+  }
+
+  /* מבטל את תצוגת הכרטיסים הישנה */
+  .expense-table tbody td::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  /* כותרות מיון */
+  .expense-table .column-head {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 3px !important;
+    white-space: nowrap !important;
+  }
+
+  .expense-table .sort-head {
+    display: inline-block !important;
+    padding: 2px !important;
+    border: 0 !important;
+    background: transparent !important;
+    font: inherit !important;
+    color: inherit !important;
+    cursor: pointer !important;
+  }
+
+  /* פילטר */
+  .expense-table .column-filter {
+    display: inline-block !important;
+  }
+
+  .expense-table .column-filter summary {
+    display: inline-flex !important;
+    width: 23px !important;
+    height: 23px !important;
+    align-items: center !important;
+    justify-content: center !important;
+  }
+
+  .expense-table .column-filter-menu {
+    position: fixed !important;
+    z-index: 99999 !important;
+
+    min-width: 180px !important;
+    max-width: 280px !important;
+    max-height: 300px !important;
+
+    overflow-y: auto !important;
+
+    background: white !important;
+    border: 1px solid #dfe3eb !important;
+    border-radius: 10px !important;
+
+    box-shadow: 0 12px 30px rgba(30,40,70,.18) !important;
+  }
+}
