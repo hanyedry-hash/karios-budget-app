@@ -2866,6 +2866,209 @@ textarea:focus {
     font-size: 15px;
   }
 }
+/* =========================================================
+   EXPENSE TABLE - FINAL FIX
+   טבלת הוצאות אמיתית במובייל
+========================================================= */
 
-/* redeploy latest version */
-/* redeploy latest version */
+@media (max-width: 600px) {
+
+  /* אזור הטבלה */
+  .table-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+    overflow-x: auto !important;
+    overflow-y: visible !important;
+    -webkit-overflow-scrolling: touch !important;
+  }
+
+  /* הטבלה נשארת טבלה */
+  .expense-table {
+    width: 760px !important;
+    min-width: 760px !important;
+    max-width: none !important;
+    display: table !important;
+    table-layout: auto !important;
+    border-collapse: collapse !important;
+    border-spacing: 0 !important;
+  }
+
+  .expense-table thead {
+    display: table-header-group !important;
+  }
+
+  .expense-table tbody {
+    display: table-row-group !important;
+  }
+
+  .expense-table tr {
+    display: table-row !important;
+    width: auto !important;
+    min-width: 0 !important;
+    background: transparent !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    overflow: visible !important;
+  }
+
+  .expense-table th,
+  .expense-table td {
+    display: table-cell !important;
+    width: auto !important;
+    max-width: none !important;
+    min-width: 0 !important;
+
+    padding: 10px 9px !important;
+
+    border: 0 !important;
+    border-bottom: 1px solid #edf0f4 !important;
+
+    text-align: right !important;
+    vertical-align: middle !important;
+
+    overflow: visible !important;
+    white-space: nowrap !important;
+    word-break: normal !important;
+  }
+
+  /* כותרות */
+  .expense-table th {
+    position: sticky !important;
+    top: 0 !important;
+    z-index: 10 !important;
+
+    background: #ffffff !important;
+    color: #737d8e !important;
+
+    font-size: 12px !important;
+    font-weight: 700 !important;
+  }
+
+  /* נתונים */
+  .expense-table td {
+    font-size: 13px !important;
+  }
+
+  /* מבטל את הכותרות שה-CSS הישן מוסיף בתוך הכרטיסים */
+  .expense-table tbody td::before {
+    content: none !important;
+    display: none !important;
+  }
+
+  /* רוחב העמודות */
+
+  .expense-table th:nth-child(1),
+  .expense-table td:nth-child(1) {
+    min-width: 105px !important;
+  }
+
+  .expense-table th:nth-child(2),
+  .expense-table td:nth-child(2) {
+    min-width: 190px !important;
+  }
+
+  .expense-table th:nth-child(3),
+  .expense-table td:nth-child(3) {
+    min-width: 95px !important;
+    text-align: left !important;
+  }
+
+  .expense-table th:nth-child(4),
+  .expense-table td:nth-child(4) {
+    min-width: 150px !important;
+  }
+
+  .expense-table th:nth-child(5),
+  .expense-table td:nth-child(5) {
+    min-width: 125px !important;
+  }
+
+  /* כותרת + מיון */
+  .expense-table .column-head {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    white-space: nowrap !important;
+  }
+
+  .expense-table .sort-head {
+    display: inline-block !important;
+
+    border: 0 !important;
+    background: transparent !important;
+
+    padding: 3px !important;
+
+    color: inherit !important;
+    font: inherit !important;
+    font-weight: 700 !important;
+
+    cursor: pointer !important;
+    white-space: nowrap !important;
+  }
+
+  /* כפתור סינון */
+  .expense-table .column-filter {
+    display: inline-block !important;
+    position: relative !important;
+  }
+
+  .expense-table .column-filter summary {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+
+    width: 26px !important;
+    height: 26px !important;
+
+    cursor: pointer !important;
+    border-radius: 6px !important;
+  }
+
+  /* תפריט הסינון */
+  .expense-table .column-filter-menu {
+    position: fixed !important;
+
+    z-index: 99999 !important;
+
+    min-width: 180px !important;
+    max-width: 280px !important;
+    max-height: 300px !important;
+
+    overflow-y: auto !important;
+
+    padding: 7px !important;
+
+    background: #ffffff !important;
+
+    border: 1px solid #dfe3eb !important;
+    border-radius: 10px !important;
+
+    box-shadow: 0 12px 30px rgba(30,40,70,.18) !important;
+  }
+
+  .expense-table .filter-option {
+    display: block !important;
+
+    width: 100% !important;
+
+    border: 0 !important;
+    background: transparent !important;
+
+    padding: 9px !important;
+
+    text-align: right !important;
+    white-space: nowrap !important;
+
+    cursor: pointer !important;
+  }
+
+  .expense-table .filter-option:hover,
+  .expense-table .filter-option.all {
+    background: #f1f3ff !important;
+  }
+
+  .expense-table tbody tr:hover {
+    background: #f7f8fc !important;
+  }
+}
