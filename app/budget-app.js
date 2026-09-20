@@ -874,14 +874,9 @@ export default function BudgetApp() {
         .expenses-data-row { cursor: pointer; }
         .expenses-data-row:hover { background: rgba(76, 88, 220, .05); }
         .expenses-data-table td small { display: block; margin-top: 3px; opacity: .65; font-size: 12px; }
-        .expense-column-head { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
-        .expense-column-filter { position: relative; display: inline-block; vertical-align: middle; }
-        .expense-filter-toggle { border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 15px; line-height: 1; padding: 4px 6px; border-radius: 6px; color: inherit; opacity: .75; }
-        .expense-filter-toggle:hover { background: rgba(0,0,0,.06); opacity: 1; }
-        .expense-column-filter.active .expense-filter-toggle { opacity: 1; font-weight: 800; }
-        .expense-filter-menu { position: absolute; z-index: 100; top: calc(100% + 6px); right: 0; min-width: 170px; max-width: 240px; max-height: 240px; overflow-y: auto; overflow-x: hidden; padding: 6px; border: 1px solid rgba(0,0,0,.12); border-radius: 10px; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.16); }
-        .expense-filter-menu button { display: block; width: 100%; border: 0; background: transparent; text-align: right; padding: 8px 10px; border-radius: 7px; cursor: pointer; font: inherit; white-space: nowrap; }
-        .expense-filter-menu button:hover { background: #f1f3fa; }
+        .expense-column-head { display: flex; align-items: center; justify-content: flex-start; gap: 6px; flex-wrap: nowrap; }
+        .expense-filter-select { min-width: 62px; max-width: 92px; height: 30px; border: 1px solid rgba(0,0,0,.12); border-radius: 7px; background: #fff; color: inherit; font: inherit; font-size: 12px; padding: 0 4px; cursor: pointer; }
+        .expense-filter-select:focus { outline: 2px solid rgba(76,88,220,.25); }
         .credit-import-box { padding: 18px; border: 1px dashed rgba(0,0,0,.18); border-radius: 16px; margin-bottom: 16px; }
         .file-picker { display: inline-flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; background: #eef0ff; cursor: pointer; font-weight: 700; }
         .file-picker input { display: none; }
@@ -1064,27 +1059,24 @@ function ExpensesView({ transactions, categoryMap, onOpen, filters, setFilters, 
   }
 
   function filterMenu(key, items, labelFor = (x) => x) {
-    const active = key === "date" ? Boolean(filters.fromDate || filters.toDate) : key === "amount" ? Boolean(filters.minAmount || filters.maxAmount) : key === "payment" ? Boolean(filters.paymentMethod) : Boolean(filters[key]);
+    const filterKey = key === "cardLast4" ? "cardLast4" : key === "payment" ? "paymentMethod" : key;
+    const current = key === "date" ? (filters.fromDate || "") : key === "amount" ? (filters.minAmount || "") : (filters[filterKey] || "");
     return (
-      <div className={`expense-column-filter ${active ? "active" : ""}`}>
-        <button
-          type="button"
-          className="expense-filter-toggle"
-          title="סינון עמודה"
-          aria-label="סינון עמודה"
-          onClick={(e) => { e.stopPropagation(); setOpenFilter(openFilter === key ? null : key); }}
-        >⌄</button>
-        {openFilter === key && (
-          <div className="expense-filter-menu" onClick={(e) => e.stopPropagation()}>
-            <button type="button" onClick={() => setFilter(key, "")}>הכל</button>
-            {items.map((item) => (
-              <button type="button" key={String(item)} onClick={() => setFilter(key, item)}>{labelFor(item)}</button>
-            ))}
-          </div>
-        )}
-      </div>
+      <select
+        className="expense-filter-select"
+        value={current}
+        aria-label={`סינון ${key}`}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => setFilter(key, e.target.value)}
+      >
+        <option value="">סינון</option>
+        {items.map((item) => (
+          <option key={String(item)} value={String(item)}>{labelFor(item)}</option>
+        ))}
+      </select>
     );
   }
+
 
   return (
     <section className="panel">
