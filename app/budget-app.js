@@ -876,10 +876,10 @@ export default function BudgetApp() {
         .expenses-data-table td small { display: block; margin-top: 3px; opacity: .65; font-size: 12px; }
         .expense-column-head { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
         .expense-column-filter { position: relative; display: inline-block; vertical-align: middle; }
-        .expense-column-filter summary { list-style: none; cursor: pointer; font-size: 13px; opacity: .7; padding: 2px 4px; border-radius: 6px; }
-        .expense-column-filter summary::-webkit-details-marker { display: none; }
-        .expense-column-filter.active summary { opacity: 1; font-weight: 800; }
-        .expense-filter-menu { position: static; min-width: 170px; max-width: 240px; max-height: 220px; overflow-y: auto; overflow-x: hidden; margin-top: 7px; padding: 6px; border: 1px solid rgba(0,0,0,.12); border-radius: 10px; background: #fff; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+        .expense-filter-toggle { border: 0; background: transparent; cursor: pointer; font: inherit; font-size: 15px; line-height: 1; padding: 4px 6px; border-radius: 6px; color: inherit; opacity: .75; }
+        .expense-filter-toggle:hover { background: rgba(0,0,0,.06); opacity: 1; }
+        .expense-column-filter.active .expense-filter-toggle { opacity: 1; font-weight: 800; }
+        .expense-filter-menu { position: absolute; z-index: 100; top: calc(100% + 6px); right: 0; min-width: 170px; max-width: 240px; max-height: 240px; overflow-y: auto; overflow-x: hidden; padding: 6px; border: 1px solid rgba(0,0,0,.12); border-radius: 10px; background: #fff; box-shadow: 0 8px 24px rgba(0,0,0,.16); }
         .expense-filter-menu button { display: block; width: 100%; border: 0; background: transparent; text-align: right; padding: 8px 10px; border-radius: 7px; cursor: pointer; font: inherit; white-space: nowrap; }
         .expense-filter-menu button:hover { background: #f1f3fa; }
         .credit-import-box { padding: 18px; border: 1px dashed rgba(0,0,0,.18); border-radius: 16px; margin-bottom: 16px; }
@@ -975,6 +975,8 @@ function paymentGroupLabel(tx) {
 }
 
 function ExpensesView({ transactions, categoryMap, onOpen, filters, setFilters, sort, setSort, onAdd }) {
+  const [openFilter, setOpenFilter] = useState(null);
+
   const options = useMemo(() => ({
     date: [...new Set(transactions.map((t) => t.transaction_date).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
     description: [...new Set(transactions.map((t) => t.description || "ללא תיאור"))].sort((a, b) => a.localeCompare(b, "he")),
@@ -1058,20 +1060,29 @@ function ExpensesView({ transactions, categoryMap, onOpen, filters, setFilters, 
       if (key === "cardLast4") return { ...prev, cardLast4: value };
       return { ...prev, [key]: value };
     });
+    setOpenFilter(null);
   }
 
   function filterMenu(key, items, labelFor = (x) => x) {
     const active = key === "date" ? Boolean(filters.fromDate || filters.toDate) : key === "amount" ? Boolean(filters.minAmount || filters.maxAmount) : key === "payment" ? Boolean(filters.paymentMethod) : Boolean(filters[key]);
     return (
-      <details className={`expense-column-filter ${active ? "active" : ""}`}>
-        <summary title="סינון">⌄</summary>
-        <div className="expense-filter-menu">
-          <button type="button" onClick={() => setFilter(key, "")}>הכל</button>
-          {items.map((item) => (
-            <button type="button" key={String(item)} onClick={() => setFilter(key, key === "payment" ? item : item)}>{labelFor(item)}</button>
-          ))}
-        </div>
-      </details>
+      <div className={`expense-column-filter ${active ? "active" : ""}`}>
+        <button
+          type="button"
+          className="expense-filter-toggle"
+          title="סינון עמודה"
+          aria-label="סינון עמודה"
+          onClick={(e) => { e.stopPropagation(); setOpenFilter(openFilter === key ? null : key); }}
+        >⌄</button>
+        {openFilter === key && (
+          <div className="expense-filter-menu" onClick={(e) => e.stopPropagation()}>
+            <button type="button" onClick={() => setFilter(key, "")}>הכל</button>
+            {items.map((item) => (
+              <button type="button" key={String(item)} onClick={() => setFilter(key, item)}>{labelFor(item)}</button>
+            ))}
+          </div>
+        )}
+      </div>
     );
   }
 
@@ -1403,4 +1414,4 @@ function Modal({ title, children, onClose }) {
       </div>
     </div>
   );
-       }
+}
