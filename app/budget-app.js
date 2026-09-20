@@ -91,6 +91,15 @@ export default function BudgetApp() {
   const [newCategory, setNewCategory] = useState("");
   const [confirm, setConfirm] = useState(null);
 
+  const [expenseFilters, setExpenseFilters] = useState({
+    fromDate: "",
+    toDate: "",
+    minAmount: "",
+    maxAmount: "",
+    paymentMethod: "",
+    description: "",
+    cardLast4: "",
+  });
   const [expenseSort, setExpenseSort] = useState({ key: "date", direction: "desc" });
 
   const [creditImportRows, setCreditImportRows] = useState([]);
@@ -714,7 +723,10 @@ export default function BudgetApp() {
       {tab === "expenses" && (
         <ExpensesView
           transactions={expenseTx}
+          categoryMap={categoryMap}
           onOpen={(tx) => openTx(tx, "expense")}
+          filters={expenseFilters}
+          setFilters={setExpenseFilters}
           sort={expenseSort}
           setSort={setExpenseSort}
           onAdd={() => openTx()}
@@ -824,6 +836,18 @@ export default function BudgetApp() {
       )}
 
       <style jsx global>{`
+        .expense-filters {
+          display: grid;
+          grid-template-columns: repeat(6, minmax(0, 1fr));
+          gap: 10px;
+          padding: 14px;
+          margin: 14px 0 18px;
+          border-radius: 14px;
+          background: rgba(0,0,0,.025);
+        }
+        .expense-filters label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+        .expense-filters input, .expense-filters select { width: 100%; box-sizing: border-box; }
+        .filter-actions { display: flex; align-items: end; }
         .payment-summary { margin: 18px 0 22px; padding: 18px; border: 1px solid rgba(0,0,0,.08); border-radius: 16px; }
         .payment-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
         .payment-summary-head h3 { margin: 0 0 4px; }
@@ -851,6 +875,13 @@ export default function BudgetApp() {
         .expenses-data-row:hover { background: rgba(76, 88, 220, .05); }
         .expenses-data-table td small { display: block; margin-top: 3px; opacity: .65; font-size: 12px; }
         .expense-column-head { display: flex; align-items: center; justify-content: flex-start; gap: 6px; }
+        .expense-column-filter { position: relative; display: inline-block; vertical-align: middle; }
+        .expense-column-filter summary { list-style: none; cursor: pointer; font-size: 13px; opacity: .7; padding: 2px 4px; border-radius: 6px; }
+        .expense-column-filter summary::-webkit-details-marker { display: none; }
+        .expense-column-filter.active summary { opacity: 1; font-weight: 800; }
+        .expense-filter-menu { position: static; min-width: 170px; max-width: 240px; max-height: 220px; overflow-y: auto; overflow-x: hidden; margin-top: 7px; padding: 6px; border: 1px solid rgba(0,0,0,.12); border-radius: 10px; background: #fff; box-shadow: 0 6px 18px rgba(0,0,0,.10); }
+        .expense-filter-menu button { display: block; width: 100%; border: 0; background: transparent; text-align: right; padding: 8px 10px; border-radius: 7px; cursor: pointer; font: inherit; white-space: nowrap; }
+        .expense-filter-menu button:hover { background: #f1f3fa; }
         .credit-import-box { padding: 18px; border: 1px dashed rgba(0,0,0,.18); border-radius: 16px; margin-bottom: 16px; }
         .file-picker { display: inline-flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px; background: #eef0ff; cursor: pointer; font-weight: 700; }
         .file-picker input { display: none; }
@@ -866,47 +897,13 @@ export default function BudgetApp() {
         .credit-import-table select { min-width: 120px; }
         .duplicate-row { opacity: .55; background: #fff8f8; }
         .ignored-row { opacity: .45; }
-        .expenses-table-wrap {
-          width: 100%;
-          overflow-x: auto;
-          overflow-y: visible;
-          -webkit-overflow-scrolling: touch;
-        }
-        .expenses-data-table {
-          width: 100%;
-          min-width: 760px;
-          border-collapse: collapse;
-          table-layout: fixed;
-        }
-        .expenses-data-table th,
-        .expenses-data-table td {
-          box-sizing: border-box;
-          padding: 12px 10px;
-          text-align: right;
-          vertical-align: middle;
-          white-space: nowrap;
-        }
-        .expenses-data-table th:nth-child(1),
-        .expenses-data-table td:nth-child(1) { width: 150px; }
-        .expenses-data-table th:nth-child(2),
-        .expenses-data-table td:nth-child(2) { width: 260px; }
-        .expenses-data-table th:nth-child(3),
-        .expenses-data-table td:nth-child(3) { width: 120px; }
-        .expenses-data-table th:nth-child(4),
-        .expenses-data-table td:nth-child(4) { width: 150px; }
-        .expenses-data-table th:nth-child(5),
-        .expenses-data-table td:nth-child(5) { width: 150px; }
-        .expenses-data-table tbody tr { cursor: pointer; }
-        .expenses-data-table tbody tr:hover { background: rgba(0,0,0,.035); }
-        .expenses-data-table td:nth-child(2) small { display: block; margin-top: 3px; opacity: .7; }
         @media (max-width: 700px) {
           .expenses-data-table { min-width: 760px; }
           .import-actions { align-items: flex-start; flex-direction: column; }
         }
-        @media (max-width: 900px) {
-        }
         @media (max-width: 520px) {
           .payment-summary-head { align-items: flex-start; flex-direction: column; }
+          .expenses-data-table .expense-column-head { align-items: flex-start; }
         }
       `}</style>
     </main>
@@ -977,9 +974,33 @@ function paymentGroupLabel(tx) {
   return paymentMethodLabel(tx);
 }
 
-function ExpensesView({ transactions, onOpen, sort, setSort, onAdd }) {
+function ExpensesView({ transactions, categoryMap, onOpen, filters, setFilters, sort, setSort, onAdd }) {
+  const options = useMemo(() => ({
+    date: [...new Set(transactions.map((t) => t.transaction_date).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
+    description: [...new Set(transactions.map((t) => t.description || "ללא תיאור"))].sort((a, b) => a.localeCompare(b, "he")),
+    amount: [...new Set(transactions.map((t) => Number(t.actual_amount || 0)))].sort((a, b) => a - b),
+    payment: [...new Set(transactions.map((t) => t.payment_method || "other"))],
+    card: [...new Set(transactions.map(cardLast4).filter(Boolean))].sort(),
+  }), [transactions]);
+
+  const filtered = useMemo(() => transactions.filter((t) => {
+    const amount = Number(t.actual_amount || 0);
+    const date = String(t.transaction_date || "");
+    const description = t.description || "ללא תיאור";
+    const payment = t.payment_method || "other";
+    const card = cardLast4(t);
+    if (filters.fromDate && date < filters.fromDate) return false;
+    if (filters.toDate && date > filters.toDate) return false;
+    if (filters.minAmount !== "" && amount < Number(filters.minAmount)) return false;
+    if (filters.maxAmount !== "" && amount > Number(filters.maxAmount)) return false;
+    if (filters.paymentMethod && payment !== filters.paymentMethod) return false;
+    if (filters.description && description !== filters.description) return false;
+    if (filters.cardLast4 && card !== filters.cardLast4) return false;
+    return true;
+  }), [transactions, filters]);
+
   const sorted = useMemo(() => {
-    const rows = [...transactions];
+    const rows = [...filtered];
     rows.sort((a, b) => {
       let av;
       let bv;
@@ -999,31 +1020,24 @@ function ExpensesView({ transactions, onOpen, sort, setSort, onAdd }) {
         av = String(a.transaction_date || "");
         bv = String(b.transaction_date || "");
       }
-
-      const cmp = typeof av === "number"
-        ? av - bv
-        : String(av).localeCompare(String(bv), "he");
-
+      const cmp = typeof av === "number" ? av - bv : String(av).localeCompare(String(bv), "he");
       return sort.direction === "asc" ? cmp : -cmp;
     });
     return rows;
-  }, [transactions, sort]);
+  }, [filtered, sort]);
 
   const paymentSummary = useMemo(() => {
     const map = new Map();
-    transactions.forEach((t) => {
+    filtered.forEach((t) => {
       const key = paymentGroupKey(t);
       const existing = map.get(key);
       if (existing) existing.value += Number(t.actual_amount || 0);
       else map.set(key, { label: paymentGroupLabel(t), value: Number(t.actual_amount || 0) });
     });
     return [...map.values()].sort((a, b) => b.value - a.value);
-  }, [transactions]);
+  }, [filtered]);
 
-  const total = transactions.reduce(
-    (sum, t) => sum + Number(t.actual_amount || 0),
-    0
-  );
+  const total = filtered.reduce((sum, t) => sum + Number(t.actual_amount || 0), 0);
 
   function toggleSort(key) {
     setSort((prev) => prev.key === key
@@ -1036,61 +1050,59 @@ function ExpensesView({ transactions, onOpen, sort, setSort, onAdd }) {
     return sort.direction === "asc" ? "↑" : "↓";
   }
 
+  function setFilter(key, value) {
+    setFilters((prev) => {
+      if (key === "date") return { ...prev, fromDate: value, toDate: value };
+      if (key === "amount") return { ...prev, minAmount: value === "" ? "" : String(value), maxAmount: value === "" ? "" : String(value) };
+      if (key === "payment") return { ...prev, paymentMethod: value };
+      if (key === "cardLast4") return { ...prev, cardLast4: value };
+      return { ...prev, [key]: value };
+    });
+  }
+
+  function filterMenu(key, items, labelFor = (x) => x) {
+    const active = key === "date" ? Boolean(filters.fromDate || filters.toDate) : key === "amount" ? Boolean(filters.minAmount || filters.maxAmount) : key === "payment" ? Boolean(filters.paymentMethod) : Boolean(filters[key]);
+    return (
+      <details className={`expense-column-filter ${active ? "active" : ""}`}>
+        <summary title="סינון">⌄</summary>
+        <div className="expense-filter-menu">
+          <button type="button" onClick={() => setFilter(key, "")}>הכל</button>
+          {items.map((item) => (
+            <button type="button" key={String(item)} onClick={() => setFilter(key, key === "payment" ? item : item)}>{labelFor(item)}</button>
+          ))}
+        </div>
+      </details>
+    );
+  }
+
   return (
     <section className="panel">
       <div className="panel-head">
-        <div>
-          <h2>הוצאות</h2>
-          <p>{transactions.length} הוצאות · סה״כ {money(total)}</p>
-        </div>
+        <div><h2>הוצאות</h2><p>{filtered.length} הוצאות · סה״כ {money(total)}</p></div>
         <button className="primary" onClick={onAdd}>＋ הוצאה</button>
       </div>
 
       <div className="payment-summary">
-        <div className="payment-summary-head">
-          <div>
-            <h3>הוצאות לפי אמצעי תשלום וכרטיס</h3>
-            <p>כרטיסי אשראי מסוכמים לפי חברת האשראי ו־4 הספרות האחרונות</p>
-          </div>
-          <strong>{money(total)}</strong>
-        </div>
-        {paymentSummary.length ? <Bars data={paymentSummary} /> : <Empty text="אין הוצאות בחודש הזה." />}
+        <div className="payment-summary-head"><div><h3>הוצאות לפי אמצעי תשלום וכרטיס</h3><p>כרטיסי אשראי מסוכמים לפי חברת האשראי ו־4 הספרות האחרונות</p></div><strong>{money(total)}</strong></div>
+        {paymentSummary.length ? <Bars data={paymentSummary} /> : <Empty text="אין הוצאות שתואמות לסינון." />}
       </div>
 
       <div className="expenses-table-wrap">
         <table className="expenses-data-table">
           <thead>
             <tr>
-              <th>
-                <button className="sort-head" onClick={() => toggleSort("date")}>תאריך {sortIcon("date")}</button>
-              </th>
-              <th>
-                <button className="sort-head" onClick={() => toggleSort("description")}>תיאור {sortIcon("description")}</button>
-              </th>
-              <th>
-                <button className="sort-head" onClick={() => toggleSort("amount")}>סכום {sortIcon("amount")}</button>
-              </th>
-              <th>
-                <button className="sort-head" onClick={() => toggleSort("payment")}>אופן תשלום {sortIcon("payment")}</button>
-              </th>
-              <th>
-                <button className="sort-head" onClick={() => toggleSort("card")}>4 ספרות אחרונות {sortIcon("card")}</button>
-              </th>
+              <th><div className="expense-column-head"><button className="sort-head" onClick={() => toggleSort("date")}>תאריך {sortIcon("date")}</button>{filterMenu("date", options.date, dateText)}</div></th>
+              <th><div className="expense-column-head"><button className="sort-head" onClick={() => toggleSort("description")}>תיאור {sortIcon("description")}</button>{filterMenu("description", options.description)}</div></th>
+              <th><div className="expense-column-head"><button className="sort-head" onClick={() => toggleSort("amount")}>סכום {sortIcon("amount")}</button>{filterMenu("amount", options.amount, money)}</div></th>
+              <th><div className="expense-column-head"><button className="sort-head" onClick={() => toggleSort("payment")}>אופן תשלום {sortIcon("payment")}</button>{filterMenu("payment", options.payment, (x) => paymentMethodLabel({ payment_method: x }))}</div></th>
+              <th><div className="expense-column-head"><button className="sort-head" onClick={() => toggleSort("card")}>4 ספרות אחרונות {sortIcon("card")}</button>{filterMenu("cardLast4", options.card, (x) => `•••• ${x}`)}</div></th>
             </tr>
           </thead>
           <tbody>
             {sorted.map((t) => (
-              <tr
-                key={t.id}
-                onClick={() => onOpen(t)}
-                className="expenses-data-row"
-                title="לחצי לפתיחת פרטי ההוצאה"
-              >
+              <tr key={t.id} onClick={() => onOpen(t)} className="expenses-data-row" title="לחצי לפתיחת פרטי ההוצאה">
                 <td>{dateText(t.transaction_date)}</td>
-                <td>
-                  <strong>{t.description || "ללא תיאור"}</strong>
-                  {t.merchant && <small>{t.merchant}</small>}
-                </td>
+                <td><strong>{t.description || "ללא תיאור"}</strong>{t.merchant && <small>{t.merchant}</small>}</td>
                 <td className="negative"><strong>{money(t.actual_amount)}</strong></td>
                 <td>{paymentMethodLabel(t)}</td>
                 <td>{cardLast4(t) ? `•••• ${cardLast4(t)}` : "—"}</td>
@@ -1098,11 +1110,12 @@ function ExpensesView({ transactions, onOpen, sort, setSort, onAdd }) {
             ))}
           </tbody>
         </table>
-        {!sorted.length && <Empty text="אין הוצאות בחודש הזה." />}
+        {!sorted.length && <Empty text="אין הוצאות שתואמות לסינון." />}
       </div>
     </section>
   );
 }
+
 
 
 function normalizeCsvHeader(value) {
@@ -1390,4 +1403,4 @@ function Modal({ title, children, onClose }) {
       </div>
     </div>
   );
-     }
+       }
