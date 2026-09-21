@@ -1123,6 +1123,7 @@ export default function BudgetApp() {
           sort={expenseSort}
           setSort={setExpenseSort}
           onAdd={() => openTx()}
+          onDelete={(t) => setConfirm({ type: "tx", item: t })}
         />
       )}
 
@@ -1801,6 +1802,9 @@ export default function BudgetApp() {
         .expenses-data-row:hover { background:#f8f9fe; }
         .expense-column-head { display:flex; align-items:center; gap:5px; }
         .sort-head { border:0; background:transparent; font-weight:700; }
+        .expense-actions-header { width:70px; }
+        .expense-actions-cell { text-align:center; }
+        .expense-actions-cell .icon { min-width:38px; }
         .expense-filter-select { width:75px; border:1px solid #dddfea; border-radius:7px; padding:4px; }
         .fixed-toggle {
           padding: 12px 14px;
@@ -1953,6 +1957,7 @@ function ExpensesView({
   transactions,
   categoryMap,
   onOpen,
+  onDelete,
   filters,
   setFilters,
   sort,
@@ -2257,6 +2262,7 @@ function ExpensesView({
                   )}
                 </div>
               </th>
+              <th className="expense-actions-header">פעולות</th>
             </tr>
           </thead>
 
@@ -2279,6 +2285,19 @@ function ExpensesView({
                 <td>{paymentMethodLabel(t)}</td>
                 <td>
                   {cardLast4(t) ? `•••• ${cardLast4(t)}` : "—"}
+                </td>
+                <td className="expense-actions-cell">
+                  <button
+                    type="button"
+                    className="icon danger"
+                    title="מחיקת הוצאה"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onDelete(t);
+                    }}
+                  >
+                    ×
+                  </button>
                 </td>
               </tr>
             ))}
