@@ -685,6 +685,48 @@ export default function BudgetApp() {
     }
   }
 
+  async function deleteCategory(item) {
+    if (!household || saving) return;
+    setConfirm(null);
+    setSaving(true);
+    setError("");
+
+    try {
+      const { error: txError } = await supabase
+        .from("transactions")
+        .update({ category_id: null })
+        .eq("household_id", household.id)
+        .eq("category_id", item.id);
+
+      if (txError) throw txError;
+
+      const { error: recurringError } = await supabase
+        .from("recurring_expenses")
+        .update({ category_id: null })
+        .eq("household_id", household.id)
+        .eq("category_id", item.id);
+
+      if (recurringError) throw recurringError;
+
+      const { error } = await supabase
+        .from("categories")
+        .delete()
+        .eq("id", item.id)
+        .eq("household_id", household.id);
+
+      if (error) throw error;
+      await refresh();
+    } catch (e) {
+      console.error(e);
+      setError(
+        e.message ||
+          "מחיקת הקטגוריה נכשלה. ייתכן שאין הרשאת DELETE לקטגוריות."
+      );
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function prepareCreditImport(files) {
     const list = Array.from(files || []).filter(Boolean);
     if (!list.length || !household) return;
@@ -1274,6 +1316,16 @@ export default function BudgetApp() {
             {categories.map((c) => (
               <div className="category-card" key={c.id}>
                 <strong>{c.name}</strong>
+                <button
+                  type="button"
+                  className="icon danger category-delete"
+                  title="מחיקת קטגוריה"
+                  onClick={() =>
+                    setConfirm({ type: "category", item: c })
+                  }
+                >
+                  ×
+                </button>
               </div>
             ))}
           </div>
@@ -1728,11 +1780,11 @@ export default function BudgetApp() {
             </button>
             <button
               className="danger-button"
-              onClick={() =>
-                confirm.type === "tx"
-                  ? deleteTx(confirm.item)
-                  : deleteRecurring(confirm.item)
-              }
+              onClick={() => {
+                if (confirm.type === "tx") deleteTx(confirm.item);
+                else if (confirm.type === "category") deleteCategory(confirm.item);
+                else deleteRecurring(confirm.item);
+              }}
             >
               כן, למחוק
             </button>
@@ -1840,7 +1892,8 @@ export default function BudgetApp() {
         .category-add { display:flex; gap:8px; margin-bottom:14px; }
         .category-add input { flex:1; }
         .category-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:9px; }
-        .category-card { padding:13px; border:1px solid #e4e6ed; border-radius:10px; }
+        .category-card { padding:13px; border:1px solid #e4e6ed; border-radius:10px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
+        .category-delete { flex:0 0 auto; }
         input,select,textarea { width:100%; padding:10px; border:1px solid #d8dbe5; border-radius:9px; background:#fff; }
         label { display:flex; flex-direction:column; gap:6px; font-size:13px; }
         .form { display:grid; gap:12px; }
