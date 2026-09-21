@@ -1348,20 +1348,26 @@ export default function BudgetApp() {
               </label>
 
               {modal !== "income" && (
-                <label>
-                  סוג הוצאה
-                  <select
-                    value={txForm.expense_type}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        expense_type: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="variable">משתנה – בפועל בלבד</option>
-                    <option value="fixed">קבועה – מתוכנן ובפועל</option>
-                  </select>
+                <label className="fixed-toggle">
+                  <span className="fixed-toggle-row">
+                    <input
+                      type="checkbox"
+                      checked={txForm.expense_type === "fixed"}
+                      onChange={(e) =>
+                        setTxForm({
+                          ...txForm,
+                          expense_type: e.target.checked ? "fixed" : "variable",
+                          planned_amount: e.target.checked
+                            ? (txForm.planned_amount || txForm.actual_amount || "")
+                            : "",
+                        })
+                      }
+                    />
+                    <strong>הוצאה קבועה</strong>
+                  </span>
+                  <small className="muted">
+                    סמני אם זו הוצאה קבועה שתרצי לנהל כמתוכננת ובפועל.
+                  </small>
                 </label>
               )}
 
@@ -1646,6 +1652,26 @@ export default function BudgetApp() {
         .expense-column-head { display:flex; align-items:center; gap:5px; }
         .sort-head { border:0; background:transparent; font-weight:700; }
         .expense-filter-select { width:75px; border:1px solid #dddfea; border-radius:7px; padding:4px; }
+        .fixed-toggle {
+          padding: 12px 14px;
+          border: 1px solid rgba(0,0,0,.10);
+          border-radius: 12px;
+          background: rgba(0,0,0,.02);
+        }
+        .fixed-toggle-row {
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          cursor: pointer;
+        }
+        .fixed-toggle-row input {
+          width: 18px;
+          height: 18px;
+        }
+        .fixed-toggle small {
+          display: block;
+          margin-top: 5px;
+        }
         .payment-summary { padding:16px; border:1px solid #e5e7ee; border-radius:14px; margin:14px 0; }
         .credit-import-box { padding:16px; border:1px dashed #cfd3df; border-radius:14px; margin-bottom:14px; }
         .file-picker { display:inline-block; background:#eef0ff; padding:11px 15px; border-radius:10px; font-weight:700; cursor:pointer; }
