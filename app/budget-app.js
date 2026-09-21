@@ -622,6 +622,11 @@ export default function BudgetApp() {
           id: `import-${index}-${Date.now()}`,
           selected: !duplicate && !row.ignored,
           duplicate,
+          // אפשר לערוך את התיאור לפני הייבוא
+          description: row.description || "",
+          // עסקה חוזרת מזוהה כברירת מחדל כקבועה, אך אפשר לשנות
+          expense_type: row.recurring ? "fixed" : "variable",
+          planned_amount: row.amount,
           category_id: suggestedCategory,
           category_manual: false,
           status: row.ignored
@@ -661,13 +666,16 @@ export default function BudgetApp() {
         household_id: household.id,
         created_by: user?.id || null,
         kind: "expense",
-        description: r.description,
+        description: String(r.description || r.merchant || "").trim(),
         category_id: r.category_id || null,
         transaction_date: r.date,
-        planned_amount: r.amount,
+        planned_amount:
+          r.expense_type === "fixed"
+            ? Number(r.planned_amount ?? r.amount)
+            : Number(r.amount),
         completed: true,
         actual_amount: r.amount,
-        expense_type: "variable",
+        expense_type: r.expense_type || "variable",
         person_user_id: null,
         note: r.recurring
           ? "יובא מכרטיס אשראי · עסקה חוזרת זוהתה"
@@ -2289,7 +2297,8 @@ function CreditImportView({
         <p className="muted" style={{ marginTop: 10 }}>
           המערכת מזהה אוטומטית את שורת הכותרות גם כשהיא נמצאת באמצע הקובץ,
           משתמשת ב<strong>סכום חיוב</strong>, מזהה 4 ספרות, תשלומים ושורות
-          סיכום, ומונעת כפילויות.
+          סיכום, ומונעת כפילויות. לפני הייבוא אפשר לערוך <strong>תיאור</strong>
+          ולבחור לכל עסקה <strong>משתנה / קבועה</strong>.
         </p>
       </div>
 
@@ -2352,8 +2361,11 @@ function CreditImportView({
                 <tr>
                   <th>ייבוא</th>
                   <th>תאריך</th>
+                  <th>תיאור</th>
                   <th>בית עסק</th>
                   <th>סכום חיוב</th>
+                  <th>סוג הוצאה</th>
+                  <th>סכום מתוכנן</th>
                   <th>כרטיס</th>
                   <th>קטגוריה</th>
                   <th>סימון</th>
@@ -2388,15 +2400,65 @@ function CreditImportView({
                     </td>
                     <td>{dateText(r.date)}</td>
                     <td>
-                      <strong>{r.description || "—"}</strong>
+                      <input
+                        type="text"
+                        value={r.description || ""}
+                        disabled={r.duplicate || r.ignored || loading}
+                        onChange={(e) =>
+                          updateRow(r.id, {
+                            description: e.target.value,
+                          })
+                        }
+                        placeholder="הכניסי תיאור"
+                      />
+                    </td>
+                    <td>
+                      <strong>{r.merchant || r.description || "—"}</strong>
                     </td>
                     <td>{money(r.amount)}</td>
+                    <td>
+                      <select
+                        value={r.expense_type || "variable"}
+                        disabled={r.duplicate || r.ignored || loading}
+                        onChange={(e) =>
+                          updateRow(r.id, {
+                            expense_type: e.target.value,
+                            planned_amount:
+                              e.target.value === "fixed"
+                                ? (r.planned_amount || r.amount)
+                                : r.planned_amount,
+                          })
+                        }
+                      >
+                        <option value="variable">משתנה</option>
+                        <option value="fixed">קבועה</option>
+                      </select>
+                    </td>
+                    <td>
+                      {r.expense_type === "fixed" ? (
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={r.planned_amount ?? r.amount}
+                          disabled={r.duplicate || r.ignored || loading}
+                          onChange={(e) =>
+                            updateRow(r.id, {
+                              planned_amount: e.target.value,
+                            })
+                          }
+                        />
+                      ) : (
+                        "—"
+                      )}
+                    </td>
                     <td>
                       {r.last4 ? `•••• ${r.last4}` : "—"}
                     </td>
                     <td>
                       <select
                         value={r.category_id || ""}
+                        disabled={r.duplicate || r.ignored || loading}
                         onChange={(e) =>
                           updateRow(r.id, {
                             category_id: e.target.value,
