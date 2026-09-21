@@ -102,6 +102,7 @@ export default function BudgetApp() {
     maxAmount: "",
     paymentMethod: "",
     description: "",
+    category_id: "",
     cardLast4: "",
   });
   const [expenseSort, setExpenseSort] = useState({
@@ -372,6 +373,9 @@ export default function BudgetApp() {
     )
       return setError("יש להזין סכום תקין.");
 
+    const wasFixed = editingTx?.expense_type === "fixed";
+    const isNowFixed = kind === "expense" && f.expense_type === "fixed";
+
     const row = {
       household_id: household.id,
       created_by: user?.id || null,
@@ -396,6 +400,13 @@ export default function BudgetApp() {
           : null,
     };
 
+    // אם זו הוצאה קבועה שהפכנו למשתנה, מנתקים אותה מההגדרה
+    // של ההוצאה הקבועה. כך היא לא תישאר בטעות במסך "הוצאות קבועות".
+    if (editingTx && wasFixed && !isNowFixed && editingTx.recurring_expense_id) {
+      row.recurring_expense_id = null;
+      row.recurring_month = null;
+    }
+
     setSaving(true);
     try {
       const q = editingTx
@@ -408,6 +419,36 @@ export default function BudgetApp() {
 
       const result = await q.select("*").single();
       if (result.error) throw result.error;
+
+      // אם ההוצאה הקבועה שנערכה הפכה למשתנה, בדוק אם נשארו עסקאות
+      // אחרות שמקושרות לאותה הגדרה. אם לא, מסירים את ההגדרה.
+      if (
+        editingTx &&
+        wasFixed &&
+        !isNowFixed &&
+        editingTx.recurring_expense_id
+      ) {
+        const recurringId = editingTx.recurring_expense_id;
+
+        const { count, error: countError } = await supabase
+          .from("transactions")
+          .select("id", { count: "exact", head: true })
+          .eq("household_id", household.id)
+          .eq("recurring_expense_id", recurringId);
+
+        if (countError) throw countError;
+
+        if (!count) {
+          const { error: recurringDeleteError } = await supabase
+            .from("recurring_expenses")
+            .delete()
+            .eq("id", recurringId)
+            .eq("household_id", household.id);
+
+          if (recurringDeleteError) throw recurringDeleteError;
+        }
+      }
+
       closeModal();
       await refresh();
     } catch (e) {
@@ -1756,7 +1797,7 @@ export default function BudgetApp() {
         table { width:100%; border-collapse:collapse; }
         th,td { padding:11px; border-bottom:1px solid #eceef3; text-align:right; white-space:nowrap; }
         th { background:#f7f8fb; }
-        .expenses-data-table { min-width:780px; }
+        .expenses-data-table { min-width:900px; }
         .expenses-data-row { cursor:pointer; }
         .expenses-data-row:hover { background:#f8f9fe; }
         .expense-column-head { display:flex; align-items:center; gap:5px; }
@@ -1927,6 +1968,9 @@ function ExpensesView({
       description: [
         ...new Set(transactions.map((t) => t.description || "ללא תיאור")),
       ].sort((a, b) => a.localeCompare(b, "he")),
+      category: [
+        ...new Set(transactions.map((t) => t.category_id || "")),
+      ],
       amount: [
         ...new Set(
           transactions.map((t) => Number(t.actual_amount || 0))
@@ -1966,6 +2010,11 @@ function ExpensesView({
         if (filters.paymentMethod && payment !== filters.paymentMethod)
           return false;
         if (filters.description && description !== filters.description)
+          return false;
+        if (
+          filters.category_id &&
+          String(t.category_id || "") !== String(filters.category_id)
+        )
           return false;
         if (filters.cardLast4 && card !== filters.cardLast4) return false;
 
@@ -2065,6 +2114,8 @@ function ExpensesView({
         };
       if (key === "payment")
         return { ...prev, paymentMethod: value };
+      if (key === "category_id")
+        return { ...prev, category_id: value };
       if (key === "cardLast4")
         return { ...prev, cardLast4: value };
       return { ...prev, [key]: value };
@@ -2158,6 +2209,16 @@ function ExpensesView({
               </th>
               <th>
                 <div className="expense-column-head">
+                  <span>קטגוריה</span>
+                  {filterMenu(
+                    "category_id",
+                    options.category,
+                    (x) => categoryMap[x] || "ללא קטגוריה"
+                  )}
+                </div>
+              </th>
+              <th>
+                <div className="expense-column-head">
                   <button
                     className="sort-head"
                     onClick={() => toggleSort("amount")}
@@ -2212,6 +2273,7 @@ function ExpensesView({
                   <strong>{t.description || "ללא תיאור"}</strong>
                   {t.merchant && <small>{t.merchant}</small>}
                 </td>
+                <td>{categoryMap[t.category_id] || "ללא קטגוריה"}</td>
                 <td className="negative">
                   <strong>{money(t.actual_amount)}</strong>
                 </td>
