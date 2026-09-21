@@ -1602,6 +1602,10 @@ export default function BudgetApp() {
       )}
 
       <style jsx global>{`
+        .credit-import-table { min-width: 980px; }
+        .credit-import-table input, .credit-import-table select { max-width: 150px; }
+        .credit-import-table button { white-space: nowrap; }
+
         * { box-sizing: border-box; }
         body { margin: 0; background: #f5f6fb; color: #202332; font-family: Arial, sans-serif; }
         button, input, select, textarea { font: inherit; }
@@ -2239,12 +2243,12 @@ function CreditImportView({
   onImport,
   onRows,
 }) {
-  const ready = rows.filter(
-    (r) => r.selected && !r.duplicate && !r.ignored
-  ).length;
-
+  const ready = rows.filter((r) => r.selected && !r.duplicate && !r.ignored).length;
   const duplicates = rows.filter((r) => r.duplicate).length;
   const ignored = rows.filter((r) => r.ignored).length;
+  const [editingId, setEditingId] = useState(null);
+
+  const editingRow = rows.find((r) => r.id === editingId) || null;
 
   function updateRow(id, patch) {
     onRows(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
@@ -2257,6 +2261,12 @@ function CreditImportView({
         selected: checked && !r.duplicate && !r.ignored,
       }))
     );
+  }
+
+  function saveEdit(patch) {
+    if (!editingRow) return;
+    updateRow(editingRow.id, patch);
+    setEditingId(null);
   }
 
   return (
@@ -2287,8 +2297,7 @@ function CreditImportView({
             קבצים: <strong>{fileName}</strong>
             {provider && (
               <>
-                {" "}
-                · חברת אשראי: <strong>{providerLabel(provider)}</strong>
+                {" "}· חברת אשראי: <strong>{providerLabel(provider)}</strong>
               </>
             )}
           </div>
@@ -2297,8 +2306,7 @@ function CreditImportView({
         <p className="muted" style={{ marginTop: 10 }}>
           המערכת מזהה אוטומטית את שורת הכותרות גם כשהיא נמצאת באמצע הקובץ,
           משתמשת ב<strong>סכום חיוב</strong>, מזהה 4 ספרות, תשלומים ושורות
-          סיכום, ומונעת כפילויות. לפני הייבוא אפשר לערוך <strong>תיאור</strong>
-          ולבחור לכל עסקה <strong>משתנה / קבועה</strong>.
+          סיכום, ומונעת כפילויות. לעריכת עסקה לחצי על <strong>עריכה</strong>.
         </p>
       </div>
 
@@ -2310,26 +2318,17 @@ function CreditImportView({
 
       {result && (
         <div className="success-box">
-          יובאו בהצלחה {result.imported} עסקאות. דולגו{" "}
-          {result.skipped} שורות שלא נבחרו או שכבר קיימות.
+          יובאו בהצלחה {result.imported} עסקאות. דולגו {result.skipped} שורות שלא נבחרו או שכבר קיימות.
         </div>
       )}
 
       {rows.length > 0 && (
         <>
           <div className="import-summary">
-            <span>
-              סה״כ שורות: <strong>{rows.length}</strong>
-            </span>
-            <span>
-              חדשות לבחירה: <strong>{ready}</strong>
-            </span>
-            <span>
-              כפילויות: <strong>{duplicates}</strong>
-            </span>
-            <span>
-              שורות שאינן עסקאות: <strong>{ignored}</strong>
-            </span>
+            <span>סה״כ שורות: <strong>{rows.length}</strong></span>
+            <span>חדשות לבחירה: <strong>{ready}</strong></span>
+            <span>כפילויות: <strong>{duplicates}</strong></span>
+            <span>שורות שאינן עסקאות: <strong>{ignored}</strong></span>
           </div>
 
           <div className="import-actions">
@@ -2337,20 +2336,13 @@ function CreditImportView({
               <input
                 type="checkbox"
                 style={{ width: "auto" }}
-                checked={
-                  ready > 0 &&
-                  ready === rows.filter((r) => !r.duplicate && !r.ignored).length
-                }
+                checked={ready > 0 && ready === rows.filter((r) => !r.duplicate && !r.ignored).length}
                 onChange={(e) => toggleAll(e.target.checked)}
               />
               בחירת כל העסקאות החדשות
             </label>
 
-            <button
-              className="primary"
-              disabled={!ready || loading}
-              onClick={onImport}
-            >
+            <button className="primary" disabled={!ready || loading} onClick={onImport}>
               ייבוא {ready} עסקאות
             </button>
           </div>
@@ -2361,129 +2353,49 @@ function CreditImportView({
                 <tr>
                   <th>ייבוא</th>
                   <th>תאריך</th>
-                  <th>תיאור</th>
                   <th>בית עסק</th>
                   <th>סכום חיוב</th>
-                  <th>סוג הוצאה</th>
-                  <th>סכום מתוכנן</th>
                   <th>כרטיס</th>
                   <th>קטגוריה</th>
+                  <th>סוג</th>
+                  <th>עריכה</th>
                   <th>סימון</th>
                 </tr>
               </thead>
-
               <tbody>
                 {rows.map((r) => (
                   <tr
                     key={r.id}
-                    className={
-                      r.duplicate
-                        ? "duplicate-row"
-                        : r.ignored
-                        ? "ignored-row"
-                        : ""
-                    }
+                    className={r.duplicate ? "duplicate-row" : r.ignored ? "ignored-row" : ""}
                   >
                     <td>
                       <input
                         type="checkbox"
                         checked={Boolean(r.selected)}
-                        disabled={
-                          r.duplicate || r.ignored || loading
-                        }
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            selected: e.target.checked,
-                          })
-                        }
+                        disabled={r.duplicate || r.ignored || loading}
+                        onChange={(e) => updateRow(r.id, { selected: e.target.checked })}
                       />
                     </td>
                     <td>{dateText(r.date)}</td>
-                    <td>
-                      <input
-                        type="text"
-                        value={r.description || ""}
-                        disabled={r.duplicate || r.ignored || loading}
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            description: e.target.value,
-                          })
-                        }
-                        placeholder="הכניסי תיאור"
-                      />
-                    </td>
-                    <td>
-                      <strong>{r.merchant || r.description || "—"}</strong>
-                    </td>
+                    <td><strong>{r.merchant || r.description || "—"}</strong></td>
                     <td>{money(r.amount)}</td>
+                    <td>{r.last4 ? `•••• ${r.last4}` : "—"}</td>
+                    <td>{categories.find((c) => c.id === r.category_id)?.name || "ללא קטגוריה"}</td>
+                    <td>{r.expense_type === "fixed" ? "קבועה" : "משתנה"}</td>
                     <td>
-                      <select
-                        value={r.expense_type || "variable"}
-                        disabled={r.duplicate || r.ignored || loading}
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            expense_type: e.target.value,
-                            planned_amount:
-                              e.target.value === "fixed"
-                                ? (r.planned_amount || r.amount)
-                                : r.planned_amount,
-                          })
-                        }
-                      >
-                        <option value="variable">משתנה</option>
-                        <option value="fixed">קבועה</option>
-                      </select>
-                    </td>
-                    <td>
-                      {r.expense_type === "fixed" ? (
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.01"
-                          value={r.planned_amount ?? r.amount}
-                          disabled={r.duplicate || r.ignored || loading}
-                          onChange={(e) =>
-                            updateRow(r.id, {
-                              planned_amount: e.target.value,
-                            })
-                          }
-                        />
-                      ) : (
-                        "—"
+                      {!r.duplicate && !r.ignored && (
+                        <button
+                          type="button"
+                          className="ghost"
+                          disabled={loading}
+                          onClick={() => setEditingId(r.id)}
+                        >
+                          ✏️ עריכה
+                        </button>
                       )}
                     </td>
                     <td>
-                      {r.last4 ? `•••• ${r.last4}` : "—"}
-                    </td>
-                    <td>
-                      <select
-                        value={r.category_id || ""}
-                        disabled={r.duplicate || r.ignored || loading}
-                        onChange={(e) =>
-                          updateRow(r.id, {
-                            category_id: e.target.value,
-                            category_manual: true,
-                          })
-                        }
-                      >
-                        <option value="">ללא קטגוריה</option>
-                        {categories.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td>
-                      {r.duplicate
-                        ? "כפילות"
-                        : r.ignored
-                        ? "לא עסקה"
-                        : r.recurring
-                        ? "עסקה חוזרת"
-                        : r.status === "imported"
-                        ? "יובא"
-                        : "חדש"}
+                      {r.duplicate ? "כפילות" : r.ignored ? "לא עסקה" : r.recurring ? "עסקה חוזרת" : r.status === "imported" ? "יובא" : "חדש"}
                     </td>
                   </tr>
                 ))}
@@ -2491,6 +2403,102 @@ function CreditImportView({
             </table>
           </div>
         </>
+      )}
+
+      {editingRow && (
+        <Modal title="עדכון הוצאה לפני ייבוא" onClose={() => setEditingId(null)}>
+          <div className="form-grid">
+            <label>
+              תאריך
+              <input value={dateText(editingRow.date)} readOnly />
+            </label>
+            <label>
+              בית עסק
+              <input value={editingRow.merchant || ""} readOnly />
+            </label>
+          </div>
+
+          <label>
+            תיאור
+            <input
+              autoFocus
+              value={editingRow.description || ""}
+              onChange={(e) => updateRow(editingRow.id, { description: e.target.value })}
+              placeholder="הכניסי תיאור"
+            />
+          </label>
+
+          <div className="form-grid">
+            <label>
+              סכום בפועל
+              <input value={money(editingRow.amount)} readOnly />
+            </label>
+            <label>
+              סוג הוצאה
+              <select
+                value={editingRow.expense_type || "variable"}
+                onChange={(e) =>
+                  updateRow(editingRow.id, {
+                    expense_type: e.target.value,
+                    planned_amount:
+                      e.target.value === "fixed"
+                        ? editingRow.planned_amount || editingRow.amount
+                        : editingRow.planned_amount,
+                  })
+                }
+              >
+                <option value="variable">משתנה</option>
+                <option value="fixed">קבועה</option>
+              </select>
+            </label>
+          </div>
+
+          {editingRow.expense_type === "fixed" && (
+            <label>
+              סכום מתוכנן חודשי
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={editingRow.planned_amount ?? editingRow.amount}
+                onChange={(e) => updateRow(editingRow.id, { planned_amount: e.target.value })}
+              />
+            </label>
+          )}
+
+          <label>
+            קטגוריה
+            <select
+              value={editingRow.category_id || ""}
+              onChange={(e) => updateRow(editingRow.id, { category_id: e.target.value, category_manual: true })}
+            >
+              <option value="">ללא קטגוריה</option>
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </label>
+
+          <div className="form-grid">
+            <label>
+              חברת אשראי
+              <input value={providerLabel(editingRow.provider)} readOnly />
+            </label>
+            <label>
+              4 ספרות אחרונות
+              <input value={editingRow.last4 || ""} readOnly />
+            </label>
+          </div>
+
+          <div className="modal-actions">
+            <button type="button" className="ghost" onClick={() => setEditingId(null)}>ביטול</button>
+            <button
+              type="button"
+              className="primary"
+              onClick={() => setEditingId(null)}
+            >
+              שמירת השינויים
+            </button>
+          </div>
+        </Modal>
       )}
     </section>
   );
