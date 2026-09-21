@@ -196,14 +196,101 @@ export default function BudgetApp() {
         }))
       );
       setCategories(c.data || []);
-      setTransactions(t.data || []);
-      setRecurring(r.data || []);
+
+      // הוצאות קבועות שיובאו מאשראי נשמרות גם כהוצאה קבועה (recurring_expenses),
+      // כדי שיופיעו במסך "הוצאות קבועות" ולא רק בטבלת ההוצאות.
+      const synced = await syncImportedFixedTransactions(
+        householdId,
+        t.data || [],
+        r.data || []
+      );
+
+      setTransactions(synced.transactions);
+      setRecurring(synced.recurring);
     } catch (e) {
       console.error(e);
       setError(e.message || "שגיאה בטעינת הנתונים");
     } finally {
       setLoading(false);
     }
+  }
+
+  async function syncImportedFixedTransactions(householdId, txRows, recurringRows) {
+    const importedFixed = (txRows || []).filter(
+      (t) =>
+        t.kind === "expense" &&
+        t.expense_type === "fixed" &&
+        !t.recurring_expense_id &&
+        String(t.note || "").includes("יובא מכרטיס אשראי")
+    );
+
+    if (!importedFixed.length) {
+      return { transactions: txRows || [], recurring: recurringRows || [] };
+    }
+
+    let nextRecurring = [...(recurringRows || [])];
+    const patchedTransactions = [...(txRows || [])];
+
+    for (const tx of importedFixed) {
+      const existing = nextRecurring.find((r) =>
+        String(r.name || "").trim() === String(tx.description || "").trim() &&
+        String(r.merchant || "").trim() === String(tx.merchant || "").trim() &&
+        String(r.credit_card_last4 || "") === String(tx.credit_card_last4 || "")
+      );
+
+      let recurringItem = existing;
+
+      if (!recurringItem) {
+        const d = new Date(`${tx.transaction_date}T00:00:00`);
+        const day = Number.isNaN(d.getTime()) ? 1 : d.getDate();
+
+        const { data, error } = await supabase
+          .from("recurring_expenses")
+          .insert({
+            household_id: householdId,
+            name: String(tx.description || tx.merchant || "הוצאה קבועה").trim(),
+            category_id: tx.category_id || null,
+            planned_amount: Number(tx.planned_amount ?? tx.actual_amount ?? 0),
+            day_of_month: Math.min(Math.max(day, 1), 31),
+            person_user_id: tx.person_user_id || null,
+            is_active: true,
+            note: tx.note || "יובא מכרטיס אשראי",
+            payment_method: tx.payment_method || "credit_card",
+            merchant: tx.merchant || tx.description || null,
+            credit_card_last4: tx.credit_card_last4 || null,
+            credit_card_provider: tx.credit_card_provider || null,
+          })
+          .select("*")
+          .single();
+
+        if (error) throw error;
+        recurringItem = data;
+        nextRecurring.push(data);
+      }
+
+      const recurringMonth = String(tx.transaction_date || "").slice(0, 7) || month;
+      const { error: updateError } = await supabase
+        .from("transactions")
+        .update({
+          recurring_expense_id: recurringItem.id,
+          recurring_month: recurringMonth,
+        })
+        .eq("id", tx.id)
+        .eq("household_id", householdId);
+
+      if (updateError) throw updateError;
+
+      const idx = patchedTransactions.findIndex((x) => x.id === tx.id);
+      if (idx >= 0) {
+        patchedTransactions[idx] = {
+          ...patchedTransactions[idx],
+          recurring_expense_id: recurringItem.id,
+          recurring_month: recurringMonth,
+        };
+      }
+    }
+
+    return { transactions: patchedTransactions, recurring: nextRecurring };
   }
 
   async function signIn(e) {
@@ -686,8 +773,19 @@ export default function BudgetApp() {
         credit_card_provider: r.provider || creditImportProvider || null,
       }));
 
-      const { error } = await supabase.from("transactions").insert(rows);
+      const { data: insertedTransactions, error } = await supabase
+        .from("transactions")
+        .insert(rows)
+        .select("*");
       if (error) throw error;
+
+      // אם סימנת עסקה כ"קבועה" בייבוא, יוצרים לה גם הגדרה ב-recurring_expenses.
+      // כך היא תופיע מיד במסך "הוצאות קבועות" ותהיה ניתנת לניהול כחיוב חודשי.
+      await syncImportedFixedTransactions(
+        household.id,
+        insertedTransactions || [],
+        []
+      );
 
       setCreditImportResult({
         imported: rows.length,
