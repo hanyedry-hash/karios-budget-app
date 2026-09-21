@@ -1148,10 +1148,16 @@ function normalizeCsvHeader(value) {
 }
 
 function detectCsvDelimiter(text) {
-  const first = String(text || "").split(/\r?\n/).find((x) => x.trim()) || "";
-  const count = (d) => first.split(d).length - 1;
-  const counts = [",", ";", "\t"].map((d) => ({ d, n: count(d) }));
-  return counts.sort((a, b) => b.n - a.n)[0]?.d || ",";
+  const lines = String(text || "").split(/\r?\n/).filter((x) => x.trim()).slice(0, 40);
+  const candidates = [",", ";", "\t"];
+  const scored = candidates.map((d) => {
+    const counts = lines.map((line) => line.split(d).length - 1).filter((n) => n > 0);
+    if (!counts.length) return { d, score: 0 };
+    const max = Math.max(...counts);
+    const consistent = counts.filter((n) => n === max).length;
+    return { d, score: max * 3 + consistent };
+  });
+  return scored.sort((a, b) => b.score - a.score)[0]?.d || ",";
 }
 
 function parseCsvMatrix(text, delimiter) {
@@ -1277,23 +1283,67 @@ function cardLast4(tx) {
   return tx.payment_method === "credit_card" && tx.credit_card_last4 ? String(tx.credit_card_last4).slice(-4) : "";
 }
 
+function findCreditHeader(matrix) {
+  const maxRows = Math.min(matrix.length, 60);
+  let best = null;
+
+  for (let i = 0; i < maxRows; i++) {
+    const headers = matrix[i] || [];
+    if (!headers.length) continue;
+
+    const dateCol = csvColumn(headers, ["תאריך חיוב", "תאריך עסקה", "תאריך עסקה/חיוב", "תאריך", "transaction date", "purchase date", "date"]);
+    const merchantCol = csvColumn(headers, ["שם בית העסק", "שם בית עסק", "בית העסק", "בית עסק", "שם העסק", "תיאור", "merchant", "description", "business name"]);
+    const chargeCol = csvColumn(headers, ["סכום חיוב", "סכום לחיוב", "סכום חיוב בשח", "חיוב", "charge amount", "charged amount", "amount charged", "debit"]);
+    const purchaseCol = csvColumn(headers, ["סכום עסקה", "סכום העסקה", "סכום עסקה בשח", "purchase amount", "transaction amount", "amount"]);
+    const categoryCol = csvColumn(headers, ["קטגוריה", "category"]);
+    const last4Col = csvColumn(headers, ["4 ספרות", "4 ספרות אחרונות", "מספר כרטיס", "כרטיס", "last 4", "last4", "card number"]);
+    const providerCol = csvColumn(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"]);
+    const statusCol = csvColumn(headers, ["סטטוס", "status", "סוג עסקה", "transaction type"]);
+
+    let score = 0;
+    if (dateCol >= 0) score += 5;
+    if (merchantCol >= 0) score += 5;
+    if (chargeCol >= 0 || purchaseCol >= 0) score += 5;
+    if (categoryCol >= 0) score += 1;
+    if (last4Col >= 0) score += 1;
+    if (providerCol >= 0) score += 1;
+    if (statusCol >= 0) score += 1;
+
+    if (dateCol >= 0 && merchantCol >= 0 && (chargeCol >= 0 || purchaseCol >= 0)) {
+      if (!best || score > best.score) {
+        best = { rowIndex: i, headers, dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol, score };
+      }
+    }
+  }
+
+  return best;
+}
+
 function parseCreditCsv(text, fileName) {
   const delimiter = detectCsvDelimiter(text);
   const matrix = parseCsvMatrix(text, delimiter);
   if (matrix.length < 2) return { provider: "other", rows: [] };
-  const headers = matrix[0];
-  const dateCol = csvColumn(headers, ["תאריך חיוב", "תאריך עסקה", "תאריך עסקה/חיוב", "תאריך", "transaction date", "purchase date", "date"]);
-  const merchantCol = csvColumn(headers, ["שם בית העסק", "בית עסק", "שם העסק", "תיאור", "merchant", "description", "business name"]);
-  const chargeCol = csvColumn(headers, ["סכום חיוב", "סכום לחיוב", "חיוב", "charge amount", "charged amount", "amount charged", "debit"]);
-  const purchaseCol = csvColumn(headers, ["סכום עסקה", "סכום העסקה", "purchase amount", "transaction amount", "amount"]);
-  const categoryCol = csvColumn(headers, ["קטגוריה", "category"]);
-  const last4Col = csvColumn(headers, ["4 ספרות", "4 ספרות אחרונות", "מספר כרטיס", "כרטיס", "last 4", "last4", "card number"]);
-  const providerCol = csvColumn(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"]);
-  const statusCol = csvColumn(headers, ["סטטוס", "status", "סוג עסקה", "transaction type"]);
+
+  const header = findCreditHeader(matrix);
+  if (!header) return { provider: detectCreditProvider(fileName, matrix[0] || [], text), rows: [] };
+
+  const {
+    rowIndex,
+    headers,
+    dateCol,
+    merchantCol,
+    chargeCol,
+    purchaseCol,
+    categoryCol,
+    last4Col,
+    providerCol,
+    statusCol,
+  } = header;
+
   const provider = detectCreditProvider(fileName, headers, text);
   const fileLast4 = String(fileName).match(/(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/)?.[1] || "";
 
-  const rows = matrix.slice(1).map((cells) => {
+  const rows = matrix.slice(rowIndex + 1).map((cells) => {
     const rawDate = dateCol >= 0 ? cells[dateCol] : "";
     const date = parseCreditDate(rawDate);
     const description = merchantCol >= 0 ? String(cells[merchantCol] || "").trim() : "";
@@ -1303,8 +1353,15 @@ function parseCreditCsv(text, fileName) {
     const status = statusCol >= 0 ? String(cells[statusCol] || "").trim() : "";
     const last4 = (last4Col >= 0 ? String(cells[last4Col] || "") : "").replace(/\D/g, "").slice(-4) || fileLast4;
     const providerCell = providerCol >= 0 ? String(cells[providerCol] || "").toLowerCase() : "";
-    const rowProvider = providerCell.includes("ישראכרט") || providerCell.includes("isracard") ? "isracard" : providerCell.includes("כאל") || providerCell.includes("cal") ? "cal" : providerCell.includes("max") ? "max" : provider;
+    const rowProvider = providerCell.includes("ישראכרט") || providerCell.includes("isracard")
+      ? "isracard"
+      : providerCell.includes("כאל") || providerCell.includes("cal")
+      ? "cal"
+      : providerCell.includes("max")
+      ? "max"
+      : provider;
     const ignored = creditRowLooksIgnored(description, status) || !date || amount === null || amount <= 0;
+
     return {
       date,
       description,
