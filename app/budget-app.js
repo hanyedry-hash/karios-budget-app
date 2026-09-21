@@ -927,8 +927,7 @@ export default function BudgetApp() {
     });
     return Object.entries(map)
       .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
+      .sort((a, b) => b.value - a.value);
   }, [expenseTx, categoryMap]);
 
   if (!user) {
