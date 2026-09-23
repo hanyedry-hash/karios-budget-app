@@ -349,29 +349,39 @@ export default function BudgetApp() {
     const kind = modal === "income" ? "income" : "expense";
     const description = String(f.description || "").trim();
     const actual = f.actual_amount === "" ? null : Number(f.actual_amount);
+    const isFixed = f.expense_type === "fixed";
     const planned =
-      kind === "expense" && f.expense_type === "fixed"
+      isFixed
         ? Number(f.planned_amount)
         : actual;
 
     if (!description) return setError("יש להזין תיאור.");
     if (!f.transaction_date) return setError("יש לבחור תאריך.");
+
     if (
-      kind === "expense" &&
-      f.expense_type === "fixed" &&
+      isFixed &&
       (!Number.isFinite(planned) || planned < 0)
     )
-      return setError("יש להזין סכום מתוכנן תקין.");
+      return setError(
+        kind === "income"
+          ? "יש להזין סכום מצופה תקין."
+          : "יש להזין סכום מתוכנן תקין."
+      );
+
     if (
       actual !== null &&
       (!Number.isFinite(actual) || actual < 0)
     )
       return setError("יש להזין סכום בפועל תקין.");
+
+    // בהכנסה משתנה חייבים סכום בפועל.
+    // בהכנסה קבועה אפשר לשמור גם בלי סכום בפועל עד שההכנסה מתקבלת.
     if (
       kind === "income" &&
-      (!Number.isFinite(actual) || actual < 0)
+      !isFixed &&
+      (actual === null || !Number.isFinite(actual) || actual < 0)
     )
-      return setError("יש להזין סכום תקין.");
+      return setError("בהכנסה משתנה יש להזין סכום בפועל.");
 
     const wasFixed = editingTx?.expense_type === "fixed";
     const isNowFixed = kind === "expense" && f.expense_type === "fixed";
@@ -383,11 +393,12 @@ export default function BudgetApp() {
       description,
       category_id: f.category_id || null,
       transaction_date: f.transaction_date,
-      planned_amount:
-        kind === "expense" && f.expense_type === "fixed" ? planned : actual,
-      completed: kind === "income" ? true : actual !== null,
+      planned_amount: isFixed ? planned : actual,
+      completed: actual !== null,
       actual_amount: actual,
-      expense_type: kind === "expense" ? f.expense_type : null,
+      // משתמשים בשדה הקיים expense_type גם עבור הכנסות,
+      // כדי לא לדרוש שינוי במסד הנתונים.
+      expense_type: f.expense_type || "variable",
       person_user_id: f.person_user_id || null,
       note: String(f.note || "").trim() || null,
       payment_method: f.payment_method || null,
@@ -1260,7 +1271,7 @@ export default function BudgetApp() {
           <div className="panel-head">
             <div>
               <h2>הכנסות</h2>
-              <p>הכנסות בפועל בחודש הנבחר</p>
+              <p>הכנסות קבועות ומשתנות · בקבועות מוצגים סכום מצופה וסכום בפועל</p>
             </div>
             <button
               className="primary"
@@ -1546,29 +1557,31 @@ export default function BudgetApp() {
                 />
               </label>
 
-              {modal !== "income" && (
-                <label className="fixed-toggle">
-                  <span className="fixed-toggle-row">
-                    <input
-                      type="checkbox"
-                      checked={txForm.expense_type === "fixed"}
-                      onChange={(e) =>
-                        setTxForm({
-                          ...txForm,
-                          expense_type: e.target.checked ? "fixed" : "variable",
-                          planned_amount: e.target.checked
-                            ? (txForm.planned_amount || txForm.actual_amount || "")
-                            : "",
-                        })
-                      }
-                    />
-                    <strong>הוצאה קבועה</strong>
-                  </span>
-                  <small className="muted">
-                    סמני אם זו הוצאה קבועה שתרצי לנהל כמתוכננת ובפועל.
-                  </small>
-                </label>
-              )}
+              <label className="fixed-toggle">
+                <span className="fixed-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={txForm.expense_type === "fixed"}
+                    onChange={(e) =>
+                      setTxForm({
+                        ...txForm,
+                        expense_type: e.target.checked ? "fixed" : "variable",
+                        planned_amount: e.target.checked
+                          ? (txForm.planned_amount || txForm.actual_amount || "")
+                          : "",
+                      })
+                    }
+                  />
+                  <strong>
+                    {modal === "income" ? "הכנסה קבועה" : "הוצאה קבועה"}
+                  </strong>
+                </span>
+                <small className="muted">
+                  {modal === "income"
+                    ? "סמני אם זו הכנסה קבועה. במקרה כזה אפשר להזין סכום מצופה וסכום בפועל."
+                    : "סמני אם זו הוצאה קבועה שתרצי לנהל כמתוכננת ובפועל."}
+                </small>
+              </label>
 
               <label>
                 קטגוריה
@@ -1590,9 +1603,9 @@ export default function BudgetApp() {
                 </select>
               </label>
 
-              {modal !== "income" && txForm.expense_type === "fixed" && (
+              {txForm.expense_type === "fixed" && (
                 <label>
-                  סכום מתוכנן
+                  {modal === "income" ? "סכום מצופה" : "סכום מתוכנן"}
                   <input
                     type="number"
                     min="0"
@@ -1622,7 +1635,11 @@ export default function BudgetApp() {
                     })
                   }
                   placeholder={
-                    modal === "income" ? "" : "השאירי ריק אם טרם חויב"
+                    modal === "income"
+                      ? txForm.expense_type === "fixed"
+                        ? "אפשר להשאיר ריק עד שההכנסה מתקבלת"
+                        : ""
+                      : "השאירי ריק אם טרם חויב"
                   }
                 />
               </label>
@@ -1848,13 +1865,16 @@ export default function BudgetApp() {
         .table-wrap, .expenses-table-wrap, .credit-import-table-wrap { overflow-x:auto; overflow-y:hidden; border:1px solid #e3e5ed; border-radius:12px; }
         table { width:100%; border-collapse:collapse; }
         .transaction-table { min-width:760px; }
-        .income-table { min-width:0; width:100%; table-layout:auto; }
+        .income-table { min-width:900px; width:100%; table-layout:auto; }
         .income-table th, .income-table td { padding:10px 8px; }
         .income-table th:nth-child(1), .income-table td:nth-child(1) { width:105px; }
         .income-table th:nth-child(2), .income-table td:nth-child(2) { min-width:170px; white-space:normal; }
         .income-table th:nth-child(3), .income-table td:nth-child(3) { width:120px; }
-        .income-table th:nth-child(4), .income-table td:nth-child(4) { width:105px; }
-        .income-table th:nth-child(5), .income-table td:nth-child(5) { width:105px; }
+        .income-table th:nth-child(4), .income-table td:nth-child(4) { width:95px; }
+        .income-table th:nth-child(5), .income-table td:nth-child(5) { width:110px; }
+        .income-table th:nth-child(6), .income-table td:nth-child(6) { width:110px; }
+        .income-table th:nth-child(7), .income-table td:nth-child(7) { width:110px; }
+        .income-table th:nth-child(8), .income-table td:nth-child(8) { width:105px; }
         .income-table .table-actions { display:flex; gap:5px; justify-content:center; }
         th,td { padding:11px; border-bottom:1px solid #eceef3; text-align:right; white-space:nowrap; }
         th { background:#f7f8fb; }
@@ -2382,20 +2402,16 @@ function TransactionTable({
   onEdit,
   onDelete,
 }) {
-  const incomeTable =
-    transactions.length > 0 &&
-    transactions.every((t) => t.kind === "income");
-
   return (
-    <div className={`table-wrap transaction-table-wrap ${incomeTable ? "income-table-wrap" : ""}`}>
-      <table className={incomeTable ? "income-table" : "transaction-table"}>
+    <div className="table-wrap transaction-table-wrap income-table-wrap">
+      <table className="income-table">
         <thead>
           <tr>
             <th>תאריך</th>
             <th>תיאור</th>
             <th>קטגוריה</th>
-            {!incomeTable && <th>סוג</th>}
-            {!incomeTable && <th>מתוכנן</th>}
+            <th>סוג</th>
+            <th>מצופה</th>
             <th>בפועל</th>
             <th>מי</th>
             <th>פעולות</th>
@@ -2422,33 +2438,21 @@ function TransactionTable({
                 </td>
                 <td>{categoryMap[t.category_id] || "ללא קטגוריה"}</td>
 
-                {!incomeTable && (
-                  <td>
-                    <span
-                      className={`badge ${
-                        income
-                          ? "success"
-                          : t.expense_type === "fixed"
-                          ? "fixed"
-                          : "variable"
-                      }`}
-                    >
-                      {income
-                        ? "הכנסה"
-                        : t.expense_type === "fixed"
-                        ? "קבועה"
-                        : "משתנה"}
-                    </span>
-                  </td>
-                )}
+                <td>
+                  <span
+                    className={`badge ${
+                      t.expense_type === "fixed" ? "fixed" : "variable"
+                    }`}
+                  >
+                    {t.expense_type === "fixed" ? "קבועה" : "משתנה"}
+                  </span>
+                </td>
 
-                {!incomeTable && (
-                  <td>
-                    {t.expense_type === "fixed"
-                      ? money(t.planned_amount)
-                      : "—"}
-                  </td>
-                )}
+                <td>
+                  {t.expense_type === "fixed"
+                    ? money(t.planned_amount)
+                    : "—"}
+                </td>
 
                 <td className={income ? "positive" : "negative"}>
                   {t.actual_amount === null
