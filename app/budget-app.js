@@ -1845,8 +1845,17 @@ export default function BudgetApp() {
         .badge.success { background:#e5f6ec; color:#167848; }
         .icon { width:34px; height:34px; border:1px solid #dddfea; background:#fff; border-radius:8px; }
         .icon.danger { color:#c33e4b; }
-        .table-wrap, .expenses-table-wrap, .credit-import-table-wrap { overflow:auto; border:1px solid #e3e5ed; border-radius:12px; }
+        .table-wrap, .expenses-table-wrap, .credit-import-table-wrap { overflow-x:auto; overflow-y:hidden; border:1px solid #e3e5ed; border-radius:12px; }
         table { width:100%; border-collapse:collapse; }
+        .transaction-table { min-width:760px; }
+        .income-table { min-width:0; width:100%; table-layout:auto; }
+        .income-table th, .income-table td { padding:10px 8px; }
+        .income-table th:nth-child(1), .income-table td:nth-child(1) { width:105px; }
+        .income-table th:nth-child(2), .income-table td:nth-child(2) { min-width:170px; white-space:normal; }
+        .income-table th:nth-child(3), .income-table td:nth-child(3) { width:120px; }
+        .income-table th:nth-child(4), .income-table td:nth-child(4) { width:105px; }
+        .income-table th:nth-child(5), .income-table td:nth-child(5) { width:105px; }
+        .income-table .table-actions { display:flex; gap:5px; justify-content:center; }
         th,td { padding:11px; border-bottom:1px solid #eceef3; text-align:right; white-space:nowrap; }
         th { background:#f7f8fb; }
         .expenses-data-table { min-width:900px; }
@@ -1913,6 +1922,9 @@ export default function BudgetApp() {
         }
         @media(max-width:560px) {
           .app { padding:10px; }
+          .income-table th, .income-table td { padding:9px 6px; font-size:13px; }
+          .income-table th:nth-child(2), .income-table td:nth-child(2) { min-width:135px; }
+          .income-table .icon { width:30px; height:30px; }
           .cards, .two-columns, .fixed-summary, .form-grid { grid-template-columns:1fr; }
           .topbar { align-items:flex-start; }
           .page-title { align-items:flex-start; }
@@ -2370,19 +2382,23 @@ function TransactionTable({
   onEdit,
   onDelete,
 }) {
+  const incomeTable =
+    transactions.length > 0 &&
+    transactions.every((t) => t.kind === "income");
+
   return (
-    <div className="table-wrap">
-      <table>
+    <div className={`table-wrap transaction-table-wrap ${incomeTable ? "income-table-wrap" : ""}`}>
+      <table className={incomeTable ? "income-table" : "transaction-table"}>
         <thead>
           <tr>
             <th>תאריך</th>
             <th>תיאור</th>
             <th>קטגוריה</th>
-            <th>סוג</th>
-            <th>מתוכנן</th>
+            {!incomeTable && <th>סוג</th>}
+            {!incomeTable && <th>מתוכנן</th>}
             <th>בפועל</th>
             <th>מי</th>
-            <th></th>
+            <th>פעולות</th>
           </tr>
         </thead>
 
@@ -2394,7 +2410,7 @@ function TransactionTable({
               <tr key={t.id}>
                 <td>{dateText(t.transaction_date)}</td>
                 <td>
-                  <strong>{t.description}</strong>
+                  <strong>{t.description || "ללא תיאור"}</strong>
                   {t.merchant && (
                     <small className="table-sub">{t.merchant}</small>
                   )}
@@ -2405,28 +2421,35 @@ function TransactionTable({
                   )}
                 </td>
                 <td>{categoryMap[t.category_id] || "ללא קטגוריה"}</td>
-                <td>
-                  <span
-                    className={`badge ${
-                      income
-                        ? "success"
+
+                {!incomeTable && (
+                  <td>
+                    <span
+                      className={`badge ${
+                        income
+                          ? "success"
+                          : t.expense_type === "fixed"
+                          ? "fixed"
+                          : "variable"
+                      }`}
+                    >
+                      {income
+                        ? "הכנסה"
                         : t.expense_type === "fixed"
-                        ? "fixed"
-                        : "variable"
-                    }`}
-                  >
-                    {income
-                      ? "הכנסה"
-                      : t.expense_type === "fixed"
-                      ? "קבועה"
-                      : "משתנה"}
-                  </span>
-                </td>
-                <td>
-                  {!income && t.expense_type === "fixed"
-                    ? money(t.planned_amount)
-                    : "—"}
-                </td>
+                        ? "קבועה"
+                        : "משתנה"}
+                    </span>
+                  </td>
+                )}
+
+                {!incomeTable && (
+                  <td>
+                    {t.expense_type === "fixed"
+                      ? money(t.planned_amount)
+                      : "—"}
+                  </td>
+                )}
+
                 <td className={income ? "positive" : "negative"}>
                   {t.actual_amount === null
                     ? "—"
@@ -2437,6 +2460,7 @@ function TransactionTable({
                   <div className="table-actions">
                     <button
                       className="icon"
+                      title="עריכה"
                       onClick={() =>
                         onEdit(t, income ? "income" : "expense")
                       }
@@ -2445,6 +2469,7 @@ function TransactionTable({
                     </button>
                     <button
                       className="icon danger"
+                      title="מחיקה"
                       onClick={() => onDelete(t)}
                     >
                       ×
