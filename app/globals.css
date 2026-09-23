@@ -1,3337 +1,1436 @@
-"use client";
-
-import { useEffect, useMemo, useState } from "react";
-import { createClient } from "@supabase/supabase-js";
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL,
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
-);
-
-const money = (v) =>
-  new Intl.NumberFormat("he-IL", {
-    style: "currency",
-    currency: "ILS",
-    maximumFractionDigits: 0,
-  }).format(Number(v || 0));
-
-const dateText = (v) => {
-  if (!v) return "";
-  const d = new Date(`${v}T00:00:00`);
-  return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString("he-IL");
-};
-
-const todayKey = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-    d.getDate()
-  ).padStart(2, "0")}`;
-
-const monthKey = (d = new Date()) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-
-const monthLabel = (m) => {
-  const [y, mo] = m.split("-").map(Number);
-  return new Date(y, mo - 1, 1).toLocaleDateString("he-IL", {
-    month: "long",
-    year: "numeric",
-  });
-};
-
-const shiftMonth = (m, n) => {
-  const [y, mo] = m.split("-").map(Number);
-  return monthKey(new Date(y, mo - 1 + n, 1));
-};
-
-const emptyTx = () => ({
-  description: "",
-  category_id: "",
-  expense_type: "variable",
-  planned_amount: "",
-  actual_amount: "",
-  person_user_id: "",
-  transaction_date: todayKey(),
-  note: "",
-  payment_method: "",
-  merchant: "",
-  credit_card_last4: "",
-  credit_card_provider: "",
-});
-
-const emptyRecurring = () => ({
-  name: "",
-  category_id: "",
-  planned_amount: "",
-  day_of_month: "1",
-  payment_method: "",
-  merchant: "",
-  person_user_id: "",
-  note: "",
-  credit_card_last4: "",
-  credit_card_provider: "",
-});
-
-export default function BudgetApp() {
-  const [user, setUser] = useState(null);
-  const [household, setHousehold] = useState(null);
-  const [profiles, setProfiles] = useState([]);
-  const [categories, setCategories] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [recurring, setRecurring] = useState([]);
-  const [month, setMonth] = useState(monthKey());
-  const [tab, setTab] = useState("dashboard");
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const [modal, setModal] = useState(null);
-  const [editingTx, setEditingTx] = useState(null);
-  const [editingRecurring, setEditingRecurring] = useState(null);
-  const [txForm, setTxForm] = useState(emptyTx());
-  const [recForm, setRecForm] = useState(emptyRecurring());
-
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [newCategory, setNewCategory] = useState("");
-  const [confirm, setConfirm] = useState(null);
-
-  const [expenseFilters, setExpenseFilters] = useState({
-    fromDate: "",
-    toDate: "",
-    minAmount: "",
-    maxAmount: "",
-    paymentMethod: "",
-    description: "",
-    category_id: "",
-    cardLast4: "",
-  });
-  const [expenseSort, setExpenseSort] = useState({
-    key: "date",
-    direction: "desc",
-  });
-
-  const [creditImportRows, setCreditImportRows] = useState([]);
-  const [creditImportFile, setCreditImportFile] = useState("");
-  const [creditImportProvider, setCreditImportProvider] = useState("");
-  const [creditImportError, setCreditImportError] = useState("");
-  const [creditImportLoading, setCreditImportLoading] = useState(false);
-  const [creditImportResult, setCreditImportResult] = useState(null);
-
-  useEffect(() => {
-    let mounted = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!mounted) return;
-      setUser(data.session?.user || null);
-      setLoading(false);
-    });
-    const { data } = supabase.auth.onAuthStateChange((_e, s) => {
-      setUser(s?.user || null);
-    });
-    return () => {
-      mounted = false;
-      data.subscription.unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    if (user) refresh();
-    else {
-      setHousehold(null);
-      setProfiles([]);
-      setCategories([]);
-      setTransactions([]);
-      setRecurring([]);
-    }
-  }, [user, month]);
-
-  async function refresh() {
-    if (!user) return;
-    setLoading(true);
-    setError("");
-    try {
-      const h = await supabase.rpc("get_my_household");
-      if (h.error) throw h.error;
-      const hr = h.data?.[0];
-      if (!hr) {
-        setHousehold(null);
-        return;
-      }
-
-      const householdId = hr.household_id;
-      setHousehold({ id: householdId, name: hr.household_name });
-
-      const [m, c, t, r] = await Promise.all([
-        supabase.rpc("get_my_household_members"),
-        supabase
-          .from("categories")
-          .select("*")
-          .eq("household_id", householdId)
-          .order("name"),
-        supabase
-          .from("transactions")
-          .select("*")
-          .eq("household_id", householdId)
-          .gte("transaction_date", `${month}-01`)
-          .lt("transaction_date", `${shiftMonth(month, 1)}-01`)
-          .order("transaction_date", { ascending: false })
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("recurring_expenses")
-          .select("*")
-          .eq("household_id", householdId)
-          .eq("is_active", true)
-          .order("day_of_month")
-          .order("name"),
-      ]);
-
-      if (m.error) console.error(m.error);
-      if (c.error) console.error(c.error);
-      if (t.error) console.error(t.error);
-      if (r.error) console.error(r.error);
-
-      setProfiles(
-        (m.data || []).map((x) => ({
-          id: x.user_id,
-          display_name: x.display_name || "ללא שם",
-          role: x.role,
-        }))
-      );
-      setCategories(c.data || []);
-
-      // הוצאות קבועות שיובאו מאשראי נשמרות גם כהוצאה קבועה (recurring_expenses),
-      // כדי שיופיעו במסך "הוצאות קבועות" ולא רק בטבלת ההוצאות.
-      const synced = await syncImportedFixedTransactions(
-        householdId,
-        t.data || [],
-        r.data || []
-      );
-
-      setTransactions(synced.transactions);
-      setRecurring(synced.recurring);
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "שגיאה בטעינת הנתונים");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function syncImportedFixedTransactions(householdId, txRows, recurringRows) {
-    const importedFixed = (txRows || []).filter(
-      (t) =>
-        t.kind === "expense" &&
-        t.expense_type === "fixed" &&
-        !t.recurring_expense_id &&
-        String(t.note || "").includes("יובא מכרטיס אשראי")
-    );
-
-    if (!importedFixed.length) {
-      return { transactions: txRows || [], recurring: recurringRows || [] };
-    }
-
-    let nextRecurring = [...(recurringRows || [])];
-    const patchedTransactions = [...(txRows || [])];
-
-    for (const tx of importedFixed) {
-      const existing = nextRecurring.find((r) =>
-        String(r.name || "").trim() === String(tx.description || "").trim() &&
-        String(r.merchant || "").trim() === String(tx.merchant || "").trim() &&
-        String(r.credit_card_last4 || "") === String(tx.credit_card_last4 || "")
-      );
-
-      let recurringItem = existing;
-
-      if (!recurringItem) {
-        const d = new Date(`${tx.transaction_date}T00:00:00`);
-        const day = Number.isNaN(d.getTime()) ? 1 : d.getDate();
-
-        const { data, error } = await supabase
-          .from("recurring_expenses")
-          .insert({
-            household_id: householdId,
-            name: String(tx.description || tx.merchant || "הוצאה קבועה").trim(),
-            category_id: tx.category_id || null,
-            planned_amount: Number(tx.planned_amount ?? tx.actual_amount ?? 0),
-            day_of_month: Math.min(Math.max(day, 1), 31),
-            person_user_id: tx.person_user_id || null,
-            is_active: true,
-            note: tx.note || "יובא מכרטיס אשראי",
-            payment_method: tx.payment_method || "credit_card",
-            merchant: tx.merchant || tx.description || null,
-            credit_card_last4: tx.credit_card_last4 || null,
-            credit_card_provider: tx.credit_card_provider || null,
-          })
-          .select("*")
-          .single();
-
-        if (error) throw error;
-        recurringItem = data;
-        nextRecurring.push(data);
-      }
-
-      const recurringMonth = String(tx.transaction_date || "").slice(0, 7) || month;
-      const { error: updateError } = await supabase
-        .from("transactions")
-        .update({
-          recurring_expense_id: recurringItem.id,
-          recurring_month: recurringMonth,
-        })
-        .eq("id", tx.id)
-        .eq("household_id", householdId);
-
-      if (updateError) throw updateError;
-
-      const idx = patchedTransactions.findIndex((x) => x.id === tx.id);
-      if (idx >= 0) {
-        patchedTransactions[idx] = {
-          ...patchedTransactions[idx],
-          recurring_expense_id: recurringItem.id,
-          recurring_month: recurringMonth,
-        };
-      }
-    }
-
-    return { transactions: patchedTransactions, recurring: nextRecurring };
-  }
-
-  async function signIn(e) {
-    e.preventDefault();
-    setLoginError("");
-    const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
-      password,
-    });
-    if (error) setLoginError("ההתחברות נכשלה. בדקי את האימייל והסיסמה.");
-  }
-
-  async function signOut() {
-    await supabase.auth.signOut();
-  }
-
-  function openTx(tx = null, kind = "expense") {
-    setError("");
-    setEditingTx(tx);
-    setTxForm(
-      tx
-        ? {
-            description: tx.description || "",
-            category_id: tx.category_id || "",
-            expense_type: tx.expense_type || "variable",
-            planned_amount: tx.planned_amount ?? "",
-            actual_amount: tx.actual_amount ?? "",
-            person_user_id: tx.person_user_id || "",
-            transaction_date: tx.transaction_date || todayKey(),
-            note: tx.note || "",
-            payment_method: tx.payment_method || "",
-            merchant: tx.merchant || "",
-            credit_card_last4: tx.credit_card_last4 || "",
-            credit_card_provider: tx.credit_card_provider || "",
-            kind,
-          }
-        : { ...emptyTx(), kind }
-    );
-    setModal(kind === "income" ? "income" : "transaction");
-  }
-
-  function closeModal() {
-    setModal(null);
-    setEditingTx(null);
-    setEditingRecurring(null);
-    setError("");
-  }
-
-  async function saveTx(e) {
-    e.preventDefault();
-    if (saving || !household) return;
-    setError("");
-
-    const f = txForm;
-    const kind = modal === "income" ? "income" : "expense";
-    const description = String(f.description || "").trim();
-    const actual = f.actual_amount === "" ? null : Number(f.actual_amount);
-    const isFixed = f.expense_type === "fixed";
-    const planned =
-      isFixed
-        ? Number(f.planned_amount)
-        : actual;
-
-    if (!description) return setError("יש להזין תיאור.");
-    if (!f.transaction_date) return setError("יש לבחור תאריך.");
-
-    if (
-      isFixed &&
-      (!Number.isFinite(planned) || planned < 0)
-    )
-      return setError(
-        kind === "income"
-          ? "יש להזין סכום מצופה תקין."
-          : "יש להזין סכום מתוכנן תקין."
-      );
-
-    if (
-      actual !== null &&
-      (!Number.isFinite(actual) || actual < 0)
-    )
-      return setError("יש להזין סכום בפועל תקין.");
-
-    // בהכנסה משתנה חייבים סכום בפועל.
-    // בהכנסה קבועה אפשר לשמור גם בלי סכום בפועל עד שההכנסה מתקבלת.
-    if (
-      kind === "income" &&
-      !isFixed &&
-      (actual === null || !Number.isFinite(actual) || actual < 0)
-    )
-      return setError("בהכנסה משתנה יש להזין סכום בפועל.");
-
-    const wasFixed = editingTx?.expense_type === "fixed";
-    const isNowFixed = kind === "expense" && f.expense_type === "fixed";
-
-    const row = {
-      household_id: household.id,
-      created_by: user?.id || null,
-      kind,
-      description,
-      category_id: f.category_id || null,
-      transaction_date: f.transaction_date,
-      planned_amount: isFixed ? planned : actual,
-      completed: actual !== null,
-      actual_amount: actual,
-      // משתמשים בשדה הקיים expense_type גם עבור הכנסות,
-      // כדי לא לדרוש שינוי במסד הנתונים.
-      expense_type: f.expense_type || "variable",
-      person_user_id: f.person_user_id || null,
-      note: String(f.note || "").trim() || null,
-      payment_method: f.payment_method || null,
-      merchant: String(f.merchant || "").trim() || null,
-      credit_card_last4:
-        String(f.credit_card_last4 || "").replace(/\D/g, "").slice(-4) || null,
-      credit_card_provider:
-        f.payment_method === "credit_card"
-          ? f.credit_card_provider || null
-          : null,
-    };
-
-    // אם זו הוצאה קבועה שהפכנו למשתנה, מנתקים אותה מההגדרה
-    // של ההוצאה הקבועה. כך היא לא תישאר בטעות במסך "הוצאות קבועות".
-    if (editingTx && wasFixed && !isNowFixed && editingTx.recurring_expense_id) {
-      row.recurring_expense_id = null;
-      row.recurring_month = null;
-    }
-
-    setSaving(true);
-    try {
-      const q = editingTx
-        ? supabase
-            .from("transactions")
-            .update(row)
-            .eq("id", editingTx.id)
-            .eq("household_id", household.id)
-        : supabase.from("transactions").insert(row);
-
-      const result = await q.select("*").single();
-      if (result.error) throw result.error;
-
-      // אם ההוצאה הקבועה שנערכה הפכה למשתנה, בדוק אם נשארו עסקאות
-      // אחרות שמקושרות לאותה הגדרה. אם לא, מסירים את ההגדרה.
-      if (
-        editingTx &&
-        wasFixed &&
-        !isNowFixed &&
-        editingTx.recurring_expense_id
-      ) {
-        const recurringId = editingTx.recurring_expense_id;
-
-        const { count, error: countError } = await supabase
-          .from("transactions")
-          .select("id", { count: "exact", head: true })
-          .eq("household_id", household.id)
-          .eq("recurring_expense_id", recurringId);
-
-        if (countError) throw countError;
-
-        if (!count) {
-          const { error: recurringDeleteError } = await supabase
-            .from("recurring_expenses")
-            .delete()
-            .eq("id", recurringId)
-            .eq("household_id", household.id);
-
-          if (recurringDeleteError) throw recurringDeleteError;
-        }
-      }
-
-      closeModal();
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "לא הצלחתי לשמור.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function openRecurring(item = null) {
-    setError("");
-    setEditingRecurring(item);
-    setRecForm(
-      item
-        ? {
-            name: item.name || "",
-            category_id: item.category_id || "",
-            planned_amount: item.planned_amount ?? "",
-            day_of_month: item.day_of_month ?? "1",
-            payment_method: item.payment_method || "",
-            merchant: item.merchant || "",
-            person_user_id: item.person_user_id || "",
-            note: item.note || "",
-            credit_card_last4: item.credit_card_last4 || "",
-            credit_card_provider: item.credit_card_provider || "",
-          }
-        : emptyRecurring()
-    );
-    setModal("recurring");
-  }
-
-  async function saveRecurring(e) {
-    e.preventDefault();
-    if (saving || !household) return;
-    setError("");
-
-    const f = recForm;
-    const planned = Number(f.planned_amount);
-    const day = Number(f.day_of_month);
-
-    if (!String(f.name || "").trim()) return setError("יש להזין שם הוצאה.");
-    if (!Number.isFinite(planned) || planned < 0)
-      return setError("יש להזין סכום מתוכנן תקין.");
-    if (!Number.isInteger(day) || day < 1 || day > 31)
-      return setError("יום בחודש חייב להיות בין 1 ל־31.");
-
-    const row = {
-      household_id: household.id,
-      name: String(f.name).trim(),
-      category_id: f.category_id || null,
-      planned_amount: planned,
-      day_of_month: day,
-      person_user_id: f.person_user_id || null,
-      is_active: true,
-      note: String(f.note || "").trim() || null,
-      payment_method: f.payment_method || null,
-      merchant: String(f.merchant || "").trim() || null,
-      credit_card_last4:
-        String(f.credit_card_last4 || "").replace(/\D/g, "").slice(-4) || null,
-      credit_card_provider:
-        f.payment_method === "credit_card"
-          ? f.credit_card_provider || null
-          : null,
-    };
-
-    setSaving(true);
-    try {
-      const q = editingRecurring
-        ? supabase
-            .from("recurring_expenses")
-            .update(row)
-            .eq("id", editingRecurring.id)
-            .eq("household_id", household.id)
-        : supabase.from("recurring_expenses").insert(row);
-
-      const result = await q.select("*").single();
-      if (result.error) throw result.error;
-      closeModal();
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setError(
-        e.message ||
-          "לא הצלחתי לשמור את ההוצאה הקבועה. אם זו הפעם הראשונה עם 4 ספרות, הריצי קודם את פקודת ה-SQL המצורפת."
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function chargeRecurring(item) {
-    if (saving || !household) return;
-
-    const actualText = window.prompt(
-      `סכום בפועל עבור ${item.name}\nמתוכנן: ${money(item.planned_amount)}`,
-      String(item.planned_amount ?? "")
-    );
-    if (actualText === null) return;
-
-    const actual = Number(actualText);
-    if (!Number.isFinite(actual) || actual < 0) {
-      alert("יש להזין סכום תקין.");
-      return;
-    }
-
-    setSaving(true);
-    setError("");
-
-    try {
-      const { data: existing, error: findError } = await supabase
-        .from("transactions")
-        .select("*")
-        .eq("recurring_expense_id", item.id)
-        .eq("recurring_month", month)
-        .maybeSingle();
-
-      if (findError) throw findError;
-
-      const row = {
-        household_id: household.id,
-        created_by: user?.id || null,
-        kind: "expense",
-        description: item.name,
-        category_id: item.category_id || null,
-        transaction_date: `${month}-${String(
-          Math.min(Number(item.day_of_month) || 1, 28)
-        ).padStart(2, "0")}`,
-        planned_amount: Number(item.planned_amount || 0),
-        completed: true,
-        actual_amount: actual,
-        expense_type: "fixed",
-        person_user_id: item.person_user_id || null,
-        note: item.note || null,
-        payment_method: item.payment_method || null,
-        merchant: item.merchant || null,
-        credit_card_last4: item.credit_card_last4 || null,
-        credit_card_provider:
-          item.payment_method === "credit_card"
-            ? item.credit_card_provider || null
-            : null,
-        recurring_expense_id: item.id,
-        recurring_month: month,
-      };
-
-      const result = existing
-        ? await supabase
-            .from("transactions")
-            .update(row)
-            .eq("id", existing.id)
-            .select("*")
-            .single()
-        : await supabase.from("transactions").insert(row).select("*").single();
-
-      if (result.error) throw result.error;
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setError(e.message || "לא הצלחתי לסמן כחויב.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteTx(tx) {
-    if (!household || saving) return;
-    setConfirm(null);
-    setSaving(true);
-    setError("");
-
-    try {
-      const { error } = await supabase
-        .from("transactions")
-        .delete()
-        .eq("id", tx.id)
-        .eq("household_id", household.id);
-
-      if (error) throw error;
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setError(
-        e.message ||
-          "המחיקה נכשלה. בדקי שלמדיניות RLS יש הרשאת DELETE לטבלת transactions."
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteRecurring(item) {
-    if (!household || saving) return;
-    setConfirm(null);
-    setSaving(true);
-    setError("");
-
-    try {
-      const { error } = await supabase
-        .from("recurring_expenses")
-        .delete()
-        .eq("id", item.id)
-        .eq("household_id", household.id);
-
-      if (error) throw error;
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setError(
-        e.message ||
-          "המחיקה נכשלה. בדקי שלמדיניות RLS יש הרשאת DELETE לטבלת recurring_expenses."
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function addCategory() {
-    const name = String(newCategory || "").trim();
-    if (!name || !household || saving) return;
-
-    setSaving(true);
-    try {
-      const { error } = await supabase.from("categories").insert({
-        household_id: household.id,
-        name,
-      });
-      if (error) throw error;
-      setNewCategory("");
-      await refresh();
-    } catch (e) {
-      setError(e.message || "לא הצלחתי להוסיף קטגוריה.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function deleteCategory(item) {
-    if (!household || saving) return;
-    setConfirm(null);
-    setSaving(true);
-    setError("");
-
-    try {
-      const { error: txError } = await supabase
-        .from("transactions")
-        .update({ category_id: null })
-        .eq("household_id", household.id)
-        .eq("category_id", item.id);
-
-      if (txError) throw txError;
-
-      const { error: recurringError } = await supabase
-        .from("recurring_expenses")
-        .update({ category_id: null })
-        .eq("household_id", household.id)
-        .eq("category_id", item.id);
-
-      if (recurringError) throw recurringError;
-
-      const { error } = await supabase
-        .from("categories")
-        .delete()
-        .eq("id", item.id)
-        .eq("household_id", household.id);
-
-      if (error) throw error;
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setError(
-        e.message ||
-          "מחיקת הקטגוריה נכשלה. ייתכן שאין הרשאת DELETE לקטגוריות."
-      );
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function prepareCreditImport(files) {
-    const list = Array.from(files || []).filter(Boolean);
-    if (!list.length || !household) return;
-
-    setCreditImportError("");
-    setCreditImportResult(null);
-    setCreditImportLoading(true);
-    setCreditImportFile(list.map((f) => f.name).join(", "));
-
-    try {
-      const allParsed = [];
-      for (const file of list) {
-        const buffer = await file.arrayBuffer();
-        const utf8 = new TextDecoder("utf-8").decode(buffer);
-        const text = utf8.includes("�")
-          ? new TextDecoder("windows-1255").decode(buffer)
-          : utf8;
-
-        const parsed = parseCreditCsv(text, file.name || "");
-        allParsed.push(...parsed.rows);
-      }
-
-      if (!allParsed.length) {
-        throw new Error(
-          "לא נמצאו עסקאות. הקוד המעודכן מחפש את שורת הכותרות גם אם היא אינה בשורה הראשונה."
-        );
-      }
-
-      const { data: existing, error: existingError } = await supabase
-        .from("transactions")
-        .select(
-          "transaction_date,description,actual_amount,payment_method,credit_card_provider,credit_card_last4,merchant"
-        )
-        .eq("household_id", household.id)
-        .eq("kind", "expense");
-
-      if (existingError) throw existingError;
-
-      const existingKeys = new Set((existing || []).map(creditDuplicateKey));
-      const seen = new Set();
-
-      const rows = allParsed.map((row, index) => {
-        const suggestedCategory =
-          row.sourceCategory
-            ? findCategoryFromSource(row.sourceCategory, categories)
-            : guessCategoryId(row.description, categories);
-
-        const key = creditDuplicateKey({
-          transaction_date: row.date,
-          description: row.description,
-          actual_amount: row.amount,
-          payment_method: "credit_card",
-          credit_card_provider: row.provider,
-          credit_card_last4: row.last4,
-          merchant: row.merchant,
-        });
-
-        const duplicate = existingKeys.has(key) || seen.has(key);
-        seen.add(key);
-
-        return {
-          ...row,
-          id: `import-${index}-${Date.now()}`,
-          selected: !duplicate && !row.ignored,
-          duplicate,
-          // אפשר לערוך את התיאור לפני הייבוא
-          description: row.description || "",
-          // עסקה חוזרת מזוהה כברירת מחדל כקבועה, אך אפשר לשנות
-          expense_type: row.recurring ? "fixed" : "variable",
-          planned_amount: row.amount,
-          category_id: suggestedCategory,
-          category_manual: false,
-          status: row.ignored
-            ? "ignored"
-            : duplicate
-            ? "duplicate"
-            : "ready",
-        };
-      });
-
-      setCreditImportProvider(
-        [...new Set(rows.map((r) => r.provider).filter(Boolean))].join(",") ||
-          "other"
-      );
-      setCreditImportRows(rows);
-    } catch (e) {
-      console.error(e);
-      setCreditImportRows([]);
-      setCreditImportError(e.message || "לא הצלחתי לקרוא את הקבצים.");
-    } finally {
-      setCreditImportLoading(false);
-    }
-  }
-
-  async function importSelectedCreditRows() {
-    const selected = creditImportRows.filter(
-      (r) => r.selected && !r.ignored && !r.duplicate
-    );
-    if (!selected.length || !household) return;
-
-    setCreditImportLoading(true);
-    setCreditImportError("");
-    setCreditImportResult(null);
-
-    try {
-      const rows = selected.map((r) => ({
-        household_id: household.id,
-        created_by: user?.id || null,
-        kind: "expense",
-        description: String(r.description || r.merchant || "").trim(),
-        category_id: r.category_id || null,
-        transaction_date: r.date,
-        planned_amount:
-          r.expense_type === "fixed"
-            ? Number(r.planned_amount ?? r.amount)
-            : Number(r.amount),
-        completed: true,
-        actual_amount: r.amount,
-        expense_type: r.expense_type || "variable",
-        person_user_id: null,
-        note: r.recurring
-          ? "יובא מכרטיס אשראי · עסקה חוזרת זוהתה"
-          : "יובא מכרטיס אשראי",
-        payment_method: "credit_card",
-        merchant: r.merchant || r.description,
-        credit_card_last4: r.last4 || null,
-        credit_card_provider: r.provider || creditImportProvider || null,
-      }));
-
-      const { data: insertedTransactions, error } = await supabase
-        .from("transactions")
-        .insert(rows)
-        .select("*");
-      if (error) throw error;
-
-      // אם סימנת עסקה כ"קבועה" בייבוא, יוצרים לה גם הגדרה ב-recurring_expenses.
-      // כך היא תופיע מיד במסך "הוצאות קבועות" ותהיה ניתנת לניהול כחיוב חודשי.
-      await syncImportedFixedTransactions(
-        household.id,
-        insertedTransactions || [],
-        []
-      );
-
-      setCreditImportResult({
-        imported: rows.length,
-        skipped: creditImportRows.length - rows.length,
-      });
-
-      setCreditImportRows((prev) =>
-        prev.map((r) =>
-          r.selected && !r.ignored && !r.duplicate
-            ? { ...r, selected: false, status: "imported" }
-            : r
-        )
-      );
-
-      await refresh();
-    } catch (e) {
-      console.error(e);
-      setCreditImportError(e.message || "הייבוא נכשל.");
-    } finally {
-      setCreditImportLoading(false);
-    }
-  }
-
-  const categoryMap = useMemo(
-    () => Object.fromEntries(categories.map((c) => [c.id, c.name])),
-    [categories]
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100%;
+  overflow-x: hidden;
+  background: #f5f7fb;
+  color: #202633;
+  font-family: Arial, "Noto Sans Hebrew", sans-serif;
+}
+
+body {
+  direction: rtl;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* =========================
+   APP
+========================= */
+
+.app {
+  width: 100%;
+  max-width: 1280px;
+  min-height: 100vh;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+/* =========================
+   HEADER
+========================= */
+
+.topbar {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.topbar h1 {
+  margin: 2px 0 0;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.eyebrow {
+  color: #727b8d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.top-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.user-name {
+  font-weight: 700;
+}
+
+/* =========================
+   MONTH
+========================= */
+
+.monthbar {
+  width: 100%;
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #ffffff;
+  border: 1px solid #e4e8f0;
+  border-radius: 16px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.monthbar strong {
+  min-width: 180px;
+  text-align: center;
+  font-size: 22px;
+}
+
+.month-arrow {
+  border: 0;
+  background: #eef1f7;
+  color: #202633;
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  font-size: 30px;
+  line-height: 1;
+}
+
+/* =========================
+   TABS
+========================= */
+
+.tabs {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0 12px;
+  scrollbar-width: none;
+}
+
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tab {
+  flex: 0 0 auto;
+  border: 0;
+  background: transparent;
+  color: #667085;
+  padding: 11px 15px;
+  border-radius: 12px;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 700;
+}
+
+.tab.active {
+  background: #e7eaff;
+  color: #3844a8;
+}
+
+/* =========================
+   TITLES
+========================= */
+
+.page-title {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.page-title h2 {
+  margin: 0;
+  font-size: 25px;
+}
+
+.page-title p {
+  margin: 5px 0 0;
+  color: #7b8494;
+  font-size: 14px;
+}
+
+.panel-head {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.panel-head h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.panel-head p {
+  margin: 5px 0 0;
+  color: #7b8494;
+  font-size: 13px;
+}
+
+/* =========================
+   BUTTONS
+========================= */
+
+.primary {
+  border: 0;
+  background: #4e5bd5;
+  color: #ffffff;
+  padding: 11px 16px;
+  border-radius: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.primary:hover {
+  filter: brightness(0.96);
+}
+
+.ghost {
+  border: 1px solid #d9dee8;
+  background: #ffffff;
+  color: #4d5666;
+  padding: 10px 14px;
+  border-radius: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.small {
+  padding: 8px 11px !important;
+  font-size: 12px !important;
+}
+
+.icon {
+  border: 0;
+  background: #f0f2f6;
+  color: #3f4755;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  font-size: 17px;
+}
+
+.icon.danger {
+  color: #c03c48;
+}
+
+/* =========================
+   DASHBOARD CARDS
+========================= */
+
+.cards {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.stat {
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e4e8f0;
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.stat span {
+  display: block;
+  color: #737d8e;
+  font-size: 12px;
+}
+
+.stat strong {
+  display: block;
+  margin-top: 7px;
+  font-size: 21px;
+  line-height: 1.2;
+}
+
+.stat small {
+  display: block;
+  margin-top: 6px;
+  color: #737d8e;
+  font-size: 12px;
+}
+
+.positive {
+  color: #1b7f4d;
+}
+
+.negative {
+  color: #c03c48;
+}
+
+/* =========================
+   PANELS
+========================= */
+
+.two-columns {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.panel {
+  width: 100%;
+  min-width: 0;
+  background: #ffffff;
+  border: 1px solid #e4e8f0;
+  border-radius: 15px;
+  padding: 16px;
+  margin-bottom: 14px;
+}
+
+/* =========================
+   CHARTS
+========================= */
+
+.chart-list {
+  width: 100%;
+  display: grid;
+  gap: 15px;
+  margin-top: 14px;
+}
+
+.chart-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 105px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.chart-label {
+  min-width: 0;
+  color: #3c4350;
+  font-size: 13px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.chart-track {
+  width: 100%;
+  height: 13px;
+  overflow: hidden;
+  background: #edf0f5;
+  border-radius: 999px;
+}
+
+.chart-bar {
+  height: 100%;
+  min-width: 2px;
+  background: linear-gradient(
+    90deg,
+    #5966d8,
+    #8b93eb
   );
+  border-radius: 999px;
+}
 
-  const memberMap = useMemo(
-    () => Object.fromEntries(profiles.map((p) => [p.id, p.display_name])),
-    [profiles]
-  );
+.chart-row strong {
+  white-space: nowrap;
+  font-size: 13px;
+}
 
-  const expenseTx = useMemo(
-    () =>
-      transactions.filter(
-        (t) => t.kind === "expense" && t.actual_amount !== null
-      ),
-    [transactions]
-  );
+/* =========================
+   FIXED EXPENSES
+========================= */
 
-  const incomeTx = useMemo(
-    () => transactions.filter((t) => t.kind === "income"),
-    [transactions]
-  );
+.fixed-list {
+  width: 100%;
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+}
 
-  const actualIncome = incomeTx.reduce(
-    (s, t) => s + Number(t.actual_amount || 0),
-    0
-  );
+.fixed-list.large {
+  gap: 10px;
+}
 
-  const actualExpenses = expenseTx.reduce(
-    (s, t) => s + Number(t.actual_amount || 0),
-    0
-  );
+.fixed-item {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid #e8ebf1;
+  border-radius: 12px;
+}
 
-  const fixedActual = expenseTx
-    .filter((t) => t.expense_type === "fixed")
-    .reduce((s, t) => s + Number(t.actual_amount || 0), 0);
+.fixed-item > div {
+  min-width: 0;
+}
 
-  const variableActual = expenseTx
-    .filter((t) => t.expense_type === "variable")
-    .reduce((s, t) => s + Number(t.actual_amount || 0), 0);
+.fixed-item strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
 
-  const chargedRecurringIds = new Set(
-    expenseTx
-      .filter(
-        (t) =>
-          t.recurring_expense_id && t.recurring_month === month
-      )
-      .map((t) => t.recurring_expense_id)
-  );
+.fixed-item small {
+  display: block;
+  margin-top: 4px;
+  color: #7b8494;
+  font-size: 12px;
+}
 
-  const pendingRecurring = recurring.filter(
-    (r) => !chargedRecurringIds.has(r.id)
-  );
+.fixed-card {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid #e8ebf1;
+  border-radius: 13px;
+}
 
-  const plannedFixed = recurring.reduce(
-    (s, r) => s + Number(r.planned_amount || 0),
-    0
-  );
+.fixed-main {
+  min-width: 0;
+}
 
-  const pendingPlanned = pendingRecurring.reduce(
-    (s, r) => s + Number(r.planned_amount || 0),
-    0
-  );
+.fixed-main strong {
+  display: block;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
 
-  const typeChart = [
-    { label: "קבועות", value: fixedActual },
-    { label: "משתנות", value: variableActual },
-  ];
+.fixed-main span {
+  display: block;
+  margin-top: 4px;
+  color: #7b8494;
+  font-size: 12px;
+}
 
-  const categoryChart = useMemo(() => {
-    const map = {};
-    expenseTx.forEach((t) => {
-      const name = categoryMap[t.category_id] || "ללא קטגוריה";
-      map[name] = (map[name] || 0) + Number(t.actual_amount || 0);
-    });
-    return Object.entries(map)
-      .map(([label, value]) => ({ label, value }))
-      .sort((a, b) => b.value - a.value);
-  }, [expenseTx, categoryMap]);
+.amounts {
+  display: flex;
+  gap: 22px;
+  color: #737d8e;
+  font-size: 12px;
+  white-space: nowrap;
+}
 
-  if (!user) {
-    return (
-      <main className="login-page" dir="rtl">
-        <form className="login-card" onSubmit={signIn}>
-          <div className="logo-circle">₪</div>
-          <h1>התקציב המשפחתי</h1>
-          <p className="muted">כניסה לחשבון המשפחתי</p>
-          <label>
-            אימייל
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label>
-            סיסמה
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-          {loginError && <div className="error">{loginError}</div>}
-          <button className="primary wide">כניסה</button>
-        </form>
-      </main>
-    );
+.amounts b {
+  display: block;
+  margin-top: 3px;
+  color: #202633;
+  font-size: 14px;
+}
+
+.row-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.fixed-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 14px 0;
+}
+
+/* =========================
+   RECENT
+========================= */
+
+.recent-row {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.recent-row:last-child {
+  border-bottom: 0;
+}
+
+.recent-row > div {
+  min-width: 0;
+}
+
+.recent-row strong {
+  overflow-wrap: anywhere;
+}
+
+.recent-row small {
+  display: block;
+  margin-top: 4px;
+  color: #7b8494;
+  font-size: 12px;
+}
+
+/* =========================
+   TABLE - DESKTOP
+========================= */
+
+.table-wrap {
+  width: 100%;
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.transactions-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+}
+
+.transactions-table th,
+.transactions-table td {
+  padding: 11px 9px;
+  border-bottom: 1px solid #edf0f4;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.transactions-table th {
+  color: #737d8e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.transactions-table td {
+  font-size: 13px;
+}
+
+.transactions-table td strong {
+  overflow-wrap: anywhere;
+}
+
+.table-sub {
+  display: block;
+  margin-top: 3px;
+  color: #858e9d;
+  font-size: 11px;
+}
+
+.table-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* =========================
+   EXPENSE FILTERS
+========================= */
+
+.expense-table .column-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.column-filter {
+  display: inline-block;
+  position: relative;
+}
+
+.column-filter summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: #727b8d;
+}
+
+.column-filter summary::-webkit-details-marker {
+  display: none;
+}
+
+.column-filter.active summary {
+  background: #e7eaff;
+  color: #3844a8;
+}
+
+.column-filter-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 5px);
+  right: 0;
+  min-width: 170px;
+  max-width: 260px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 7px;
+  background: #ffffff;
+  border: 1px solid #dfe3eb;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(30, 40, 70, 0.16);
+}
+
+.filter-option {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 8px 9px;
+  border-radius: 7px;
+  text-align: right;
+  color: #303746;
+}
+
+.filter-option:hover,
+.filter-option.all {
+  background: #f1f3ff;
+}
+
+.sort-head {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+}
+
+.active-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin: 10px 0;
+}
+
+.active-filters > button {
+  border: 1px solid #dfe3eb;
+  background: #f7f8fc;
+  color: #4d5666;
+  border-radius: 999px;
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.active-filters .clear-all {
+  border: 0;
+  background: transparent;
+  color: #4e5bd5;
+  font-weight: 700;
+}
+
+.payment-summary {
+  margin: 16px 0 18px;
+  padding: 15px;
+  border: 1px solid #e4e8f0;
+  border-radius: 14px;
+  background: #fafbfc;
+}
+
+.payment-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.payment-summary-head h3 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.payment-summary-head p {
+  margin: 4px 0 0;
+  color: #7b8494;
+  font-size: 12px;
+}
+
+.payment-summary-head > strong {
+  white-space: nowrap;
+  font-size: 18px;
+}
+
+.clickable-row {
+  cursor: pointer;
+}
+
+.clickable-row:hover {
+  background: #f7f8fc;
+}
+
+/* =========================
+   BADGES
+========================= */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #eef0f5;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.badge.fixed {
+  background: #eeeaff;
+  color: #5143a5;
+}
+
+.badge.variable {
+  background: #edf5ff;
+  color: #2f66a4;
+}
+
+.badge.success {
+  background: #e7f7ee;
+  color: #167447;
+}
+
+/* =========================
+   CATEGORIES
+========================= */
+
+.category-add {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  margin: 15px 0;
+}
+
+.category-add input {
+  flex: 1;
+}
+
+.category-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.category-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e4e8f0;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+
+.category-card strong {
+  overflow-wrap: anywhere;
+}
+
+/* =========================
+   FORMS
+========================= */
+
+.form {
+  display: grid;
+  gap: 12px;
+}
+
+.form label,
+.login-card label {
+  display: grid;
+  gap: 6px;
+  color: #444c5b;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid #d9dee8;
+  background: #ffffff;
+  color: #202633;
+  border-radius: 9px;
+  padding: 10px;
+  outline: none;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: #7b84e4;
+}
+
+/* =========================
+   MODAL
+========================= */
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(25, 31, 45, 0.42);
+}
+
+.modal {
+  width: min(620px, 100%);
+  max-height: 92vh;
+  overflow-y: auto;
+  background: #ffffff;
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.2);
+}
+
+.modal-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #edf0f4;
+}
+
+.modal-head h2 {
+  margin: 0;
+  font-size: 19px;
+}
+
+.modal-close {
+  border: 0;
+  background: #f0f2f6;
+  color: #202633;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  font-size: 22px;
+}
+
+.modal-body {
+  padding: 18px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.danger-button {
+  border: 0;
+  background: #c03c48;
+  color: #ffffff;
+  padding: 10px 15px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+/* =========================
+   LOGIN
+========================= */
+
+.login-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.login-card {
+  width: min(390px, 100%);
+  display: grid;
+  gap: 13px;
+  padding: 25px;
+  background: #ffffff;
+  border: 1px solid #e4e8f0;
+  border-radius: 18px;
+  box-shadow: 0 15px 40px rgba(40, 48, 70, 0.08);
+}
+
+.login-card h1 {
+  margin: 0;
+}
+
+.muted {
+  margin: 0;
+  color: #7b8494;
+  font-size: 13px;
+}
+
+.logo-circle {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: #e7eaff;
+  color: #414db6;
+  font-size: 22px;
+  font-weight: 800;
+}
+
+.wide {
+  width: 100%;
+}
+
+/* =========================
+   MESSAGES
+========================= */
+
+.error,
+.global-error {
+  background: #fff0f1;
+  color: #a8323e;
+  border: 1px solid #f1c7cc;
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.global-error {
+  width: 100%;
+  margin: 10px 0;
+}
+
+.empty {
+  width: 100%;
+  padding: 22px 10px;
+  color: #818a99;
+  text-align: center;
+}
+
+.loading-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+/* =========================================================
+   TABLET
+========================================================= */
+
+@media (max-width: 900px) {
+
+  .cards {
+    grid-template-columns: 1fr 1fr;
   }
 
-  if (loading && !household) {
-    return (
-      <main className="loading-page" dir="rtl">
-        טוען...
-      </main>
-    );
+  .two-columns {
+    grid-template-columns: 1fr;
   }
 
-  return (
-    <main className="app" dir="rtl">
-      <header className="topbar">
-        <div>
-          <div className="eyebrow">התקציב המשפחתי</div>
-          <h1>{household?.name || "התקציב שלי"}</h1>
-        </div>
-        <div className="top-actions">
-          <span className="user-name">{memberMap[user.id] || "משתמשת"}</span>
-          <button className="ghost" onClick={signOut}>
-            יציאה
-          </button>
-        </div>
-      </header>
-
-      <section className="monthbar">
-        <button
-          className="month-arrow"
-          onClick={() => setMonth(shiftMonth(month, -1))}
-        >
-          ‹
-        </button>
-        <strong>{monthLabel(month)}</strong>
-        <button
-          className="month-arrow"
-          onClick={() => setMonth(shiftMonth(month, 1))}
-        >
-          ›
-        </button>
-      </section>
-
-      <nav className="tabs">
-        {[
-          ["dashboard", "סיכום"],
-          ["expenses", "הוצאות"],
-          ["fixed", "הוצאות קבועות"],
-          ["income", "הכנסות"],
-          ["credit-import", "יבוא אשראי"],
-          ["categories", "קטגוריות"],
-        ].map(([id, label]) => (
-          <button
-            key={id}
-            className={tab === id ? "tab active" : "tab"}
-            onClick={() => setTab(id)}
-          >
-            {label}
-          </button>
-        ))}
-      </nav>
-
-      {error && <div className="global-error">{error}</div>}
-
-      {tab === "dashboard" && (
-        <>
-          <div className="page-title">
-            <div>
-              <h2>סיכום חודשי</h2>
-              <p>{monthLabel(month)}</p>
-            </div>
-            <button className="primary" onClick={() => openTx()}>
-              ＋ הוצאה
-            </button>
-          </div>
-
-          <section className="cards">
-            <Stat title="הכנסות בפועל" value={money(actualIncome)} tone="positive" />
-            <Stat title="הוצאות בפועל" value={money(actualExpenses)} tone="negative" />
-            <Stat
-              title="יתרה"
-              value={money(actualIncome - actualExpenses)}
-              tone={actualIncome - actualExpenses >= 0 ? "positive" : "negative"}
-            />
-            <Stat
-              title="קבועות מתוכננות"
-              value={money(plannedFixed)}
-              subtitle={`${pendingRecurring.length} ממתינות לחיוב`}
-            />
-          </section>
-
-          <div className="two-columns">
-            <Panel title="קבועות מול משתנות">
-              <Bars data={typeChart} />
-            </Panel>
-            <Panel title="הוצאות לפי קטגוריה">
-              {categoryChart.length ? (
-                <Bars data={categoryChart} />
-              ) : (
-                <Empty text="אין עדיין הוצאות בפועל בחודש הזה." />
-              )}
-            </Panel>
-          </div>
-
-          <div className="two-columns">
-            <Panel title="הוצאות קבועות ממתינות לחיוב">
-              {pendingRecurring.length ? (
-                <div className="fixed-list">
-                  {pendingRecurring.slice(0, 6).map((r) => (
-                    <div className="fixed-item" key={r.id}>
-                      <div>
-                        <strong>{r.name}</strong>
-                        <small>
-                          יום {r.day_of_month} · {money(r.planned_amount)}
-                          {r.credit_card_last4
-                            ? ` · •••• ${r.credit_card_last4}`
-                            : ""}
-                        </small>
-                      </div>
-                      <button
-                        className="small primary"
-                        onClick={() => chargeRecurring(r)}
-                      >
-                        סימון כחויבה
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <Empty text="כל ההוצאות הקבועות סומנו כחויבות." />
-              )}
-            </Panel>
-
-            <Panel title="תנועות אחרונות">
-              {transactions.slice(0, 7).map((t) => (
-                <div className="recent-row" key={t.id}>
-                  <div>
-                    <strong>{t.description}</strong>
-                    <small>
-                      {dateText(t.transaction_date)} ·{" "}
-                      {categoryMap[t.category_id] || "ללא קטגוריה"}
-                    </small>
-                  </div>
-                  <strong
-                    className={t.kind === "income" ? "positive" : "negative"}
-                  >
-                    {t.kind === "income" ? "+" : "-"}
-                    {money(t.actual_amount)}
-                  </strong>
-                </div>
-              ))}
-              {!transactions.length && <Empty text="אין תנועות בחודש הזה." />}
-            </Panel>
-          </div>
-        </>
-      )}
-
-      {tab === "expenses" && (
-        <ExpensesView
-          transactions={expenseTx}
-          categoryMap={categoryMap}
-          onOpen={(tx) => openTx(tx, "expense")}
-          filters={expenseFilters}
-          setFilters={setExpenseFilters}
-          sort={expenseSort}
-          setSort={setExpenseSort}
-          onAdd={() => openTx()}
-          onDelete={(t) => setConfirm({ type: "tx", item: t })}
-        />
-      )}
-
-      {tab === "fixed" && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>הוצאות קבועות</h2>
-              <p>מתוכנן ובפועל. חיוב בפועל נכנס להוצאות רק לאחר סימון כחויב.</p>
-            </div>
-            <button className="primary" onClick={() => openRecurring()}>
-              ＋ הוצאה קבועה
-            </button>
-          </div>
-
-          <div className="fixed-summary">
-            <Stat title="מתוכנן" value={money(plannedFixed)} />
-            <Stat title="בפועל" value={money(fixedActual)} tone="negative" />
-            <Stat title="ממתין" value={money(pendingPlanned)} />
-          </div>
-
-          <div className="fixed-list large">
-            {recurring.map((r) => {
-              const charged = chargedRecurringIds.has(r.id);
-              const actual = expenseTx.find(
-                (t) =>
-                  t.recurring_expense_id === r.id &&
-                  t.recurring_month === month
-              )?.actual_amount;
-
-              return (
-                <div className="fixed-card" key={r.id}>
-                  <div className="fixed-main">
-                    <strong>{r.name}</strong>
-                    <span>
-                      {categoryMap[r.category_id] || "ללא קטגוריה"} · יום{" "}
-                      {r.day_of_month}
-                      {r.credit_card_last4
-                        ? ` · ${paymentMethodLabel({
-                            payment_method: "credit_card",
-                            credit_card_provider: r.credit_card_provider,
-                            credit_card_last4: r.credit_card_last4,
-                          })}`
-                        : ""}
-                    </span>
-                  </div>
-
-                  <div className="amounts">
-                    <span>
-                      מתוכנן <b>{money(r.planned_amount)}</b>
-                    </span>
-                    <span>
-                      בפועל <b>{charged ? money(actual) : "—"}</b>
-                    </span>
-                  </div>
-
-                  <div className="row-actions">
-                    {charged ? (
-                      <span className="badge success">חויבה</span>
-                    ) : (
-                      <button
-                        className="small primary"
-                        onClick={() => chargeRecurring(r)}
-                      >
-                        סימון כחויבה
-                      </button>
-                    )}
-                    <button className="icon" onClick={() => openRecurring(r)}>
-                      ✎
-                    </button>
-                    <button
-                      className="icon danger"
-                      onClick={() =>
-                        setConfirm({ type: "recurring", item: r })
-                      }
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-            {!recurring.length && (
-              <Empty text="עדיין לא הוגדרו הוצאות קבועות." />
-            )}
-          </div>
-        </section>
-      )}
-
-      {tab === "income" && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>הכנסות</h2>
-              <p>הכנסות קבועות ומשתנות · בקבועות מוצגים סכום מצופה וסכום בפועל</p>
-            </div>
-            <button
-              className="primary"
-              onClick={() => openTx(null, "income")}
-            >
-              ＋ הכנסה
-            </button>
-          </div>
-          <TransactionTable
-            transactions={incomeTx}
-            categoryMap={categoryMap}
-            memberMap={memberMap}
-            onEdit={openTx}
-            onDelete={(t) => setConfirm({ type: "tx", item: t })}
-          />
-        </section>
-      )}
-
-      {tab === "credit-import" && (
-        <CreditImportView
-          rows={creditImportRows}
-          fileName={creditImportFile}
-          provider={creditImportProvider}
-          loading={creditImportLoading}
-          error={creditImportError}
-          result={creditImportResult}
-          categories={categories}
-          onFile={prepareCreditImport}
-          onImport={importSelectedCreditRows}
-          onRows={setCreditImportRows}
-        />
-      )}
-
-      {tab === "categories" && (
-        <section className="panel">
-          <div className="panel-head">
-            <div>
-              <h2>קטגוריות</h2>
-              <p>ניתן להוסיף קטגוריה חדשה.</p>
-            </div>
-          </div>
-          <div className="category-add">
-            <input
-              value={newCategory}
-              onChange={(e) => setNewCategory(e.target.value)}
-              placeholder="שם קטגוריה חדשה"
-            />
-            <button className="primary" onClick={addCategory} disabled={saving}>
-              הוספה
-            </button>
-          </div>
-          <div className="category-grid">
-            {categories.map((c) => (
-              <div className="category-card" key={c.id}>
-                <strong>{c.name}</strong>
-                <button
-                  type="button"
-                  className="icon danger category-delete"
-                  title="מחיקת קטגוריה"
-                  onClick={() =>
-                    setConfirm({ type: "category", item: c })
-                  }
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {modal && (
-        <Modal
-          title={
-            modal === "recurring"
-              ? editingRecurring
-                ? "עריכת הוצאה קבועה"
-                : "הוצאה קבועה חדשה"
-              : editingTx
-              ? "עריכת תנועה"
-              : modal === "income"
-              ? "הכנסה חדשה"
-              : "הוצאה חדשה"
-          }
-          onClose={closeModal}
-        >
-          {modal === "recurring" ? (
-            <form className="form" onSubmit={saveRecurring}>
-              <label>
-                שם ההוצאה
-                <input
-                  value={recForm.name}
-                  onChange={(e) =>
-                    setRecForm({ ...recForm, name: e.target.value })
-                  }
-                />
-              </label>
-
-              <label>
-                קטגוריה
-                <select
-                  value={recForm.category_id}
-                  onChange={(e) =>
-                    setRecForm({
-                      ...recForm,
-                      category_id: e.target.value,
-                    })
-                  }
-                >
-                  <option value="">ללא קטגוריה</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <div className="form-grid">
-                <label>
-                  סכום מתוכנן
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={recForm.planned_amount}
-                    onChange={(e) =>
-                      setRecForm({
-                        ...recForm,
-                        planned_amount: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  יום בחודש
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={recForm.day_of_month}
-                    onChange={(e) =>
-                      setRecForm({
-                        ...recForm,
-                        day_of_month: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </div>
-
-              <label>
-                בית עסק
-                <input
-                  value={recForm.merchant}
-                  onChange={(e) =>
-                    setRecForm({ ...recForm, merchant: e.target.value })
-                  }
-                />
-              </label>
-
-              <label>
-                אמצעי תשלום
-                <select
-                  value={recForm.payment_method}
-                  onChange={(e) =>
-                    setRecForm({
-                      ...recForm,
-                      payment_method: e.target.value,
-                    })
-                  }
-                >
-                  <option value="">לא צוין</option>
-                  <option value="credit_card">כרטיס אשראי</option>
-                  <option value="bank">חשבון בנק</option>
-                  <option value="direct_debit">הוראת קבע</option>
-                  <option value="cash">מזומן</option>
-                  <option value="bit">ביט</option>
-                  <option value="paybox">פייבוקס</option>
-                  <option value="other">אחר</option>
-                </select>
-              </label>
-
-              {recForm.payment_method === "credit_card" && (
-                <>
-                  <div className="form-grid">
-                    <label>
-                      4 ספרות אחרונות
-                      <input
-                        inputMode="numeric"
-                        maxLength="4"
-                        value={recForm.credit_card_last4}
-                        onChange={(e) =>
-                          setRecForm({
-                            ...recForm,
-                            credit_card_last4: e.target.value
-                              .replace(/\D/g, "")
-                              .slice(0, 4),
-                          })
-                        }
-                        placeholder="לדוגמה 2109"
-                      />
-                    </label>
-
-                    <label>
-                      חברת אשראי
-                      <select
-                        value={recForm.credit_card_provider}
-                        onChange={(e) =>
-                          setRecForm({
-                            ...recForm,
-                            credit_card_provider: e.target.value,
-                          })
-                        }
-                      >
-                        <option value="">לא צוין</option>
-                        <option value="isracard">ישראכרט</option>
-                        <option value="cal">כאל</option>
-                        <option value="max">MAX</option>
-                        <option value="flycard">Fly Card</option>
-                        <option value="other">אחר</option>
-                      </select>
-                    </label>
-                  </div>
-                </>
-              )}
-
-              <label>
-                על שם מי
-                <select
-                  value={recForm.person_user_id}
-                  onChange={(e) =>
-                    setRecForm({
-                      ...recForm,
-                      person_user_id: e.target.value,
-                    })
-                  }
-                >
-                  <option value="">לא צוין</option>
-                  {profiles.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.display_name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              <label>
-                הערה
-                <textarea
-                  rows="3"
-                  value={recForm.note}
-                  onChange={(e) =>
-                    setRecForm({ ...recForm, note: e.target.value })
-                  }
-                />
-              </label>
-
-              {error && <div className="error">{error}</div>}
-
-              <div className="modal-actions">
-                <button type="button" className="ghost" onClick={closeModal}>
-                  ביטול
-                </button>
-                <button className="primary" disabled={saving}>
-                  {saving ? "שומר..." : "שמירה"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form className="form" onSubmit={saveTx}>
-              <label>
-                {modal === "income" ? "מקור ההכנסה" : "תיאור"}
-                <input
-                  value={txForm.description}
-                  onChange={(e) =>
-                    setTxForm({
-                      ...txForm,
-                      description: e.target.value,
-                    })
-                  }
-                />
-              </label>
-
-              <label className="fixed-toggle">
-                <span className="fixed-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={txForm.expense_type === "fixed"}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        expense_type: e.target.checked ? "fixed" : "variable",
-                        planned_amount: e.target.checked
-                          ? (txForm.planned_amount || txForm.actual_amount || "")
-                          : "",
-                      })
-                    }
-                  />
-                  <strong>
-                    {modal === "income" ? "הכנסה קבועה" : "הוצאה קבועה"}
-                  </strong>
-                </span>
-                <small className="muted">
-                  {modal === "income"
-                    ? "סמני אם זו הכנסה קבועה. במקרה כזה אפשר להזין סכום מצופה וסכום בפועל."
-                    : "סמני אם זו הוצאה קבועה שתרצי לנהל כמתוכננת ובפועל."}
-                </small>
-              </label>
-
-              <label>
-                קטגוריה
-                <select
-                  value={txForm.category_id}
-                  onChange={(e) =>
-                    setTxForm({
-                      ...txForm,
-                      category_id: e.target.value,
-                    })
-                  }
-                >
-                  <option value="">ללא קטגוריה</option>
-                  {categories.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
-
-              {txForm.expense_type === "fixed" && (
-                <label>
-                  {modal === "income" ? "סכום מצופה" : "סכום מתוכנן"}
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={txForm.planned_amount}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        planned_amount: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              )}
-
-              <label>
-                סכום בפועל
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={txForm.actual_amount}
-                  onChange={(e) =>
-                    setTxForm({
-                      ...txForm,
-                      actual_amount: e.target.value,
-                    })
-                  }
-                  placeholder={
-                    modal === "income"
-                      ? txForm.expense_type === "fixed"
-                        ? "אפשר להשאיר ריק עד שההכנסה מתקבלת"
-                        : ""
-                      : "השאירי ריק אם טרם חויב"
-                  }
-                />
-              </label>
-
-              <div className="form-grid">
-                <label>
-                  תאריך
-                  <input
-                    type="date"
-                    value={txForm.transaction_date}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        transaction_date: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  על שם מי
-                  <select
-                    value={txForm.person_user_id}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        person_user_id: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="">לא צוין</option>
-                    {profiles.map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.display_name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-
-              <div className="form-grid">
-                <label>
-                  בית עסק
-                  <input
-                    value={txForm.merchant}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        merchant: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-
-                <label>
-                  4 ספרות אחרונות
-                  <input
-                    inputMode="numeric"
-                    maxLength="4"
-                    value={txForm.credit_card_last4}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        credit_card_last4: e.target.value
-                          .replace(/\D/g, "")
-                          .slice(0, 4),
-                      })
-                    }
-                  />
-                </label>
-              </div>
-
-              {txForm.payment_method === "credit_card" && (
-                <label>
-                  חברת אשראי
-                  <select
-                    value={txForm.credit_card_provider}
-                    onChange={(e) =>
-                      setTxForm({
-                        ...txForm,
-                        credit_card_provider: e.target.value,
-                      })
-                    }
-                  >
-                    <option value="">לא צוין</option>
-                    <option value="isracard">ישראכרט</option>
-                    <option value="cal">כאל</option>
-                    <option value="max">MAX</option>
-                    <option value="flycard">Fly Card</option>
-                    <option value="other">אחר</option>
-                  </select>
-                </label>
-              )}
-
-              <label>
-                אמצעי תשלום
-                <select
-                  value={txForm.payment_method}
-                  onChange={(e) =>
-                    setTxForm({
-                      ...txForm,
-                      payment_method: e.target.value,
-                    })
-                  }
-                >
-                  <option value="">לא צוין</option>
-                  <option value="credit_card">כרטיס אשראי</option>
-                  <option value="bank">חשבון בנק</option>
-                  <option value="direct_debit">הוראת קבע</option>
-                  <option value="cash">מזומן</option>
-                  <option value="bit">ביט</option>
-                  <option value="paybox">פייבוקס</option>
-                  <option value="other">אחר</option>
-                </select>
-              </label>
-
-              <label>
-                הערה
-                <textarea
-                  rows="3"
-                  value={txForm.note}
-                  onChange={(e) =>
-                    setTxForm({ ...txForm, note: e.target.value })
-                  }
-                />
-              </label>
-
-              {error && <div className="error">{error}</div>}
-
-              <div className="modal-actions">
-                <button type="button" className="ghost" onClick={closeModal}>
-                  ביטול
-                </button>
-                <button className="primary" disabled={saving}>
-                  {saving ? "שומר..." : "שמירה"}
-                </button>
-              </div>
-            </form>
-          )}
-        </Modal>
-      )}
-
-      {confirm && (
-        <Modal title="אישור מחיקה" onClose={() => setConfirm(null)}>
-          <p>
-            למחוק את{" "}
-            <strong>{confirm.item.name || confirm.item.description}</strong>?
-          </p>
-          <div className="modal-actions">
-            <button
-              className="ghost"
-              onClick={() => setConfirm(null)}
-            >
-              ביטול
-            </button>
-            <button
-              className="danger-button"
-              onClick={() => {
-                if (confirm.type === "tx") deleteTx(confirm.item);
-                else if (confirm.type === "category") deleteCategory(confirm.item);
-                else deleteRecurring(confirm.item);
-              }}
-            >
-              כן, למחוק
-            </button>
-          </div>
-        </Modal>
-      )}
-
-      <style jsx global>{`
-        .credit-import-table { min-width: 980px; }
-        .credit-import-table input, .credit-import-table select { max-width: 150px; }
-        .credit-import-table button { white-space: nowrap; }
-
-        * { box-sizing: border-box; }
-        body { margin: 0; background: #f5f6fb; color: #202332; font-family: Arial, sans-serif; }
-        button, input, select, textarea { font: inherit; }
-        button { cursor: pointer; }
-        .app { max-width: 1280px; margin: 0 auto; padding: 18px; }
-        .topbar, .page-title, .panel-head, .monthbar, .payment-summary-head, .import-actions { display:flex; align-items:center; justify-content:space-between; gap:14px; }
-        .topbar { margin-bottom: 14px; }
-        .eyebrow { font-size: 12px; opacity:.6; }
-        h1,h2,h3,p { margin-top:0; }
-        h1 { margin-bottom:0; font-size:25px; }
-        h2 { margin-bottom:4px; }
-        p, .muted { color:#707687; }
-        .top-actions, .row-actions, .modal-actions { display:flex; align-items:center; gap:8px; }
-        .monthbar { background:#fff; border:1px solid #e2e4ec; border-radius:14px; padding:10px 16px; width:max-content; margin:0 auto 14px; }
-        .month-arrow { border:0; background:#eef0f8; border-radius:8px; width:34px; height:34px; font-size:24px; }
-        .tabs { display:flex; gap:7px; overflow-x:auto; padding-bottom:14px; }
-        .tab { border:1px solid #dddfea; background:#fff; padding:9px 13px; border-radius:10px; white-space:nowrap; }
-        .tab.active { background:#646fd6; color:#fff; border-color:#646fd6; }
-        .primary { border:0; background:#6973db; color:#fff; padding:10px 16px; border-radius:10px; font-weight:700; }
-        .primary:disabled { opacity:.5; cursor:not-allowed; }
-        .ghost { border:1px solid #dddfea; background:#fff; padding:9px 14px; border-radius:10px; }
-        .danger-button { border:0; background:#d9535f; color:#fff; padding:10px 16px; border-radius:10px; }
-        .wide { width:100%; }
-        .page-title { margin:10px 0 16px; }
-        .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
-        .stat { background:#fff; border:1px solid #e3e5ed; border-radius:14px; padding:16px; }
-        .stat span { display:block; color:#72798b; font-size:13px; margin-bottom:7px; }
-        .stat strong { display:block; font-size:23px; }
-        .stat small { display:block; margin-top:7px; color:#81889a; }
-        .positive { color:#16834c; }
-        .negative { color:#c33e4b; }
-        .two-columns { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px; }
-        .panel { background:#fff; border:1px solid #e2e4ec; border-radius:16px; padding:16px; margin-bottom:14px; }
-        .chart-list { display:grid; gap:11px; }
-        .chart-row { display:grid; grid-template-columns:130px 1fr 90px; gap:10px; align-items:center; }
-        .chart-track { height:11px; background:#eef0f5; border-radius:20px; overflow:hidden; }
-        .chart-bar { height:100%; background:#6973db; border-radius:20px; }
-        .fixed-list { display:grid; gap:9px; }
-        .fixed-item, .fixed-card, .recent-row { display:flex; align-items:center; justify-content:space-between; gap:12px; border:1px solid #eceef3; border-radius:12px; padding:12px; }
-        .fixed-item small, .recent-row small, .fixed-main span, .table-sub { display:block; color:#7c8290; margin-top:4px; font-size:12px; }
-        .small { padding:7px 10px; font-size:12px; }
-        .fixed-summary { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin:12px 0; }
-        .amounts { display:flex; gap:20px; }
-        .amounts span { font-size:13px; color:#747a89; }
-        .badge { display:inline-block; padding:4px 8px; border-radius:999px; font-size:12px; background:#eef0f5; }
-        .badge.success { background:#e5f6ec; color:#167848; }
-        .icon { width:34px; height:34px; border:1px solid #dddfea; background:#fff; border-radius:8px; }
-        .icon.danger { color:#c33e4b; }
-        .table-wrap, .expenses-table-wrap, .credit-import-table-wrap { overflow-x:auto; overflow-y:hidden; border:1px solid #e3e5ed; border-radius:12px; }
-        table { width:100%; border-collapse:collapse; }
-        .transaction-table { min-width:760px; }
-        .income-table-wrap { width:100%; overflow-x:auto; }
-        .income-table { min-width:760px; width:100%; table-layout:fixed; }
-        .income-table th, .income-table td { padding:10px 8px; }
-        .income-table th:nth-child(1), .income-table td:nth-child(1) { width:82px; }
-        .income-table th:nth-child(2), .income-table td:nth-child(2) { width:145px; white-space:normal; }
-        .income-table th:nth-child(3), .income-table td:nth-child(3) { width:90px; }
-        .income-table th:nth-child(4), .income-table td:nth-child(4) { width:70px; }
-        .income-table th:nth-child(5), .income-table td:nth-child(5) { width:90px; }
-        .income-table th:nth-child(6), .income-table td:nth-child(6) { width:90px; }
-        .income-table th:nth-child(7), .income-table td:nth-child(7) { width:85px; }
-        .income-table th:nth-child(8), .income-table td:nth-child(8) { width:90px; }
-        .income-table .table-actions { display:flex; gap:5px; justify-content:center; }
-        th,td { padding:11px; border-bottom:1px solid #eceef3; text-align:right; white-space:nowrap; }
-        th { background:#f7f8fb; }
-        .expenses-data-table { min-width:900px; }
-        .expenses-data-row { cursor:pointer; }
-        .expenses-data-row:hover { background:#f8f9fe; }
-        .expense-column-head { display:flex; align-items:center; gap:5px; }
-        .sort-head { border:0; background:transparent; font-weight:700; }
-        .expense-actions-header { width:70px; }
-        .expense-actions-cell { text-align:center; }
-        .expense-actions-cell .icon { min-width:38px; }
-        .expense-filter-select { width:75px; border:1px solid #dddfea; border-radius:7px; padding:4px; }
-        .fixed-toggle {
-          padding: 12px 14px;
-          border: 1px solid rgba(0,0,0,.10);
-          border-radius: 12px;
-          background: rgba(0,0,0,.02);
-        }
-        .fixed-toggle-row {
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          cursor: pointer;
-        }
-        .fixed-toggle-row input {
-          width: 18px;
-          height: 18px;
-        }
-        .fixed-toggle small {
-          display: block;
-          margin-top: 5px;
-        }
-        .payment-summary { padding:16px; border:1px solid #e5e7ee; border-radius:14px; margin:14px 0; }
-        .credit-import-box { padding:16px; border:1px dashed #cfd3df; border-radius:14px; margin-bottom:14px; }
-        .file-picker { display:inline-block; background:#eef0ff; padding:11px 15px; border-radius:10px; font-weight:700; cursor:pointer; }
-        .file-picker input { display:none; }
-        .import-summary { display:flex; flex-wrap:wrap; gap:18px; margin:14px 0; }
-        .success-box, .error, .global-error { padding:11px 13px; border-radius:10px; margin:10px 0; }
-        .success-box { background:#e7f7ed; color:#176d43; }
-        .error, .global-error { background:#fff0f1; color:#a52f3b; }
-        .credit-import-table { min-width:900px; }
-        .duplicate-row { opacity:.55; background:#fff7f7; }
-        .ignored-row { opacity:.45; }
-        .category-add { display:flex; gap:8px; margin-bottom:14px; }
-        .category-add input { flex:1; }
-        .category-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:9px; }
-        .category-card { padding:13px; border:1px solid #e4e6ed; border-radius:10px; display:flex; align-items:center; justify-content:space-between; gap:10px; }
-        .category-delete { flex:0 0 auto; }
-        input,select,textarea { width:100%; padding:10px; border:1px solid #d8dbe5; border-radius:9px; background:#fff; }
-        label { display:flex; flex-direction:column; gap:6px; font-size:13px; }
-        .form { display:grid; gap:12px; }
-        .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-        .modal-backdrop { position:fixed; inset:0; background:rgba(20,24,35,.45); display:flex; align-items:center; justify-content:center; padding:15px; z-index:50; }
-        .modal { width:min(620px,100%); max-height:92vh; overflow:auto; background:#fff; border-radius:16px; }
-        .modal-head { display:flex; justify-content:space-between; align-items:center; padding:16px; border-bottom:1px solid #eceef3; }
-        .modal-head h2 { margin:0; }
-        .modal-close { border:0; background:transparent; font-size:27px; }
-        .modal-body { padding:16px; }
-        .login-page, .loading-page { min-height:100vh; display:grid; place-items:center; padding:20px; }
-        .login-card { width:min(390px,100%); background:#fff; padding:28px; border-radius:18px; border:1px solid #e1e3eb; display:grid; gap:13px; }
-        .logo-circle { width:55px; height:55px; border-radius:50%; display:grid; place-items:center; background:#6973db; color:#fff; font-size:24px; margin:auto; }
-        @media(max-width:800px) {
-          .cards, .two-columns { grid-template-columns:1fr 1fr; }
-          .chart-row { grid-template-columns:100px 1fr 75px; }
-        }
-        @media(max-width:560px) {
-          .app { padding:10px; }
-          .income-table th, .income-table td { padding:9px 6px; font-size:13px; }
-          .income-table th:nth-child(2), .income-table td:nth-child(2) { width:125px; }
-          .income-table .icon { width:30px; height:30px; }
-          .cards, .two-columns, .fixed-summary, .form-grid { grid-template-columns:1fr; }
-          .topbar { align-items:flex-start; }
-          .page-title { align-items:flex-start; }
-          .fixed-card { align-items:flex-start; flex-direction:column; }
-          .amounts { width:100%; justify-content:space-between; }
-          .chart-row { grid-template-columns:90px 1fr 70px; font-size:12px; }
-        }
-      `}</style>
-    </main>
-  );
-}
-
-function Stat({ title, value, subtitle, tone = "" }) {
-  return (
-    <div className="stat">
-      <span>{title}</span>
-      <strong className={tone}>{value}</strong>
-      {subtitle && <small>{subtitle}</small>}
-    </div>
-  );
-}
-
-function Panel({ title, children }) {
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <h2>{title}</h2>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-function Empty({ text }) {
-  return <div className="muted" style={{ padding: 18, textAlign: "center" }}>{text}</div>;
-}
-
-function Bars({ data }) {
-  const max = Math.max(...data.map((x) => x.value), 1);
-  return (
-    <div className="chart-list">
-      {data.map((x) => (
-        <div className="chart-row" key={x.label}>
-          <div>{x.label}</div>
-          <div className="chart-track">
-            <div
-              className="chart-bar"
-              style={{ width: `${(x.value / max) * 100}%` }}
-            />
-          </div>
-          <strong>{money(x.value)}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function paymentMethodLabel(tx) {
-  const method = tx.payment_method || "other";
-
-  if (method === "credit_card") {
-    const provider = {
-      isracard: "ישראכרט",
-      cal: "כאל",
-      max: "MAX",
-      flycard: "Fly Card",
-      other: "אשראי",
-    }[tx.credit_card_provider] || "אשראי";
-
-    return tx.credit_card_last4
-      ? `${provider} •••• ${tx.credit_card_last4}`
-      : provider;
+  .category-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  return {
-    direct_debit: "הוראת קבע",
-    standing_order: "הוראת קבע",
-    horaat_kava: "הוראת קבע",
-    bank: "חשבון בנק",
-    cash: "מזומן",
-    bit: "ביט",
-    paybox: "פייבוקס",
-    other: "אחר",
-  }[method] || "לא צוין";
-}
-
-function paymentGroupKey(tx) {
-  if (tx.payment_method === "credit_card") {
-    return `card:${tx.credit_card_provider || "other"}:${tx.credit_card_last4 || ""}`;
+  .tab {
+    font-size: 16px;
   }
-  return `method:${tx.payment_method || "other"}`;
 }
 
-function ExpensesView({
-  transactions,
-  categoryMap,
-  onOpen,
-  onDelete,
-  filters,
-  setFilters,
-  sort,
-  setSort,
-  onAdd,
-}) {
-  const options = useMemo(
-    () => ({
-      date: [
-        ...new Set(transactions.map((t) => t.transaction_date).filter(Boolean)),
-      ].sort((a, b) => b.localeCompare(a)),
-      description: [
-        ...new Set(transactions.map((t) => t.description || "ללא תיאור")),
-      ].sort((a, b) => a.localeCompare(b, "he")),
-      category: [
-        ...new Set(transactions.map((t) => t.category_id || "")),
-      ],
-      amount: [
-        ...new Set(
-          transactions.map((t) => Number(t.actual_amount || 0))
-        ),
-      ].sort((a, b) => a - b),
-      payment: [
-        ...new Set(transactions.map((t) => t.payment_method || "other")),
-      ],
-      card: [
-        ...new Set(transactions.map(cardLast4).filter(Boolean)),
-      ].sort(),
-    }),
-    [transactions]
-  );
+/* =========================================================
+   MOBILE
+========================================================= */
 
-  const filtered = useMemo(
-    () =>
-      transactions.filter((t) => {
-        const amount = Number(t.actual_amount || 0);
-        const date = String(t.transaction_date || "");
-        const description = t.description || "ללא תיאור";
-        const payment = t.payment_method || "other";
-        const card = cardLast4(t);
+@media (max-width: 600px) {
 
-        if (filters.fromDate && date < filters.fromDate) return false;
-        if (filters.toDate && date > filters.toDate) return false;
-        if (
-          filters.minAmount !== "" &&
-          amount < Number(filters.minAmount)
-        )
-          return false;
-        if (
-          filters.maxAmount !== "" &&
-          amount > Number(filters.maxAmount)
-        )
-          return false;
-        if (filters.paymentMethod && payment !== filters.paymentMethod)
-          return false;
-        if (filters.description && description !== filters.description)
-          return false;
-        if (
-          filters.category_id &&
-          String(t.category_id || "") !== String(filters.category_id)
-        )
-          return false;
-        if (filters.cardLast4 && card !== filters.cardLast4) return false;
-
-        return true;
-      }),
-    [transactions, filters]
-  );
-
-  const sorted = useMemo(() => {
-    const rows = [...filtered];
-
-    rows.sort((a, b) => {
-      let av;
-      let bv;
-
-      if (sort.key === "description") {
-        av = a.description || "";
-        bv = b.description || "";
-      } else if (sort.key === "amount") {
-        av = Number(a.actual_amount || 0);
-        bv = Number(b.actual_amount || 0);
-      } else if (sort.key === "payment") {
-        av = paymentMethodLabel(a);
-        bv = paymentMethodLabel(b);
-      } else if (sort.key === "card") {
-        av = cardLast4(a);
-        bv = cardLast4(b);
-      } else {
-        av = String(a.transaction_date || "");
-        bv = String(b.transaction_date || "");
-      }
-
-      const cmp =
-        typeof av === "number"
-          ? av - bv
-          : String(av).localeCompare(String(bv), "he");
-
-      return sort.direction === "asc" ? cmp : -cmp;
-    });
-
-    return rows;
-  }, [filtered, sort]);
-
-  const paymentSummary = useMemo(() => {
-    const map = new Map();
-
-    filtered.forEach((t) => {
-      const key = paymentGroupKey(t);
-      const existing = map.get(key);
-
-      if (existing) {
-        existing.value += Number(t.actual_amount || 0);
-      } else {
-        map.set(key, {
-          label: paymentMethodLabel(t),
-          value: Number(t.actual_amount || 0),
-        });
-      }
-    });
-
-    return [...map.values()].sort((a, b) => b.value - a.value);
-  }, [filtered]);
-
-  const total = filtered.reduce(
-    (sum, t) => sum + Number(t.actual_amount || 0),
-    0
-  );
-
-  function toggleSort(key) {
-    setSort((prev) =>
-      prev.key === key
-        ? {
-            key,
-            direction: prev.direction === "asc" ? "desc" : "asc",
-          }
-        : {
-            key,
-            direction: key === "date" ? "desc" : "asc",
-          }
-    );
+  html,
+  body {
+    width: 100%;
+    overflow-x: hidden;
   }
 
-  function sortIcon(key) {
-    if (sort.key !== key) return "↕";
-    return sort.direction === "asc" ? "↑" : "↓";
+  .app {
+    width: 100%;
+    max-width: 100%;
+    padding: 10px;
+    overflow-x: hidden;
   }
 
-  function setFilter(key, value) {
-    setFilters((prev) => {
-      if (key === "date")
-        return { ...prev, fromDate: value, toDate: value };
-      if (key === "amount")
-        return {
-          ...prev,
-          minAmount: value === "" ? "" : String(value),
-          maxAmount: value === "" ? "" : String(value),
-        };
-      if (key === "payment")
-        return { ...prev, paymentMethod: value };
-      if (key === "category_id")
-        return { ...prev, category_id: value };
-      if (key === "cardLast4")
-        return { ...prev, cardLast4: value };
-      return { ...prev, [key]: value };
-    });
+  /* HEADER */
+
+  .topbar {
+    width: 100%;
+    align-items: flex-start;
+    gap: 8px;
   }
 
-  function filterMenu(key, items, labelFor = (x) => x) {
-    const filterKey =
-      key === "cardLast4"
-        ? "cardLast4"
-        : key === "payment"
-        ? "paymentMethod"
-        : key;
-
-    const current =
-      key === "date"
-        ? filters.fromDate || ""
-        : key === "amount"
-        ? filters.minAmount || ""
-        : filters[filterKey] || "";
-
-    return (
-      <select
-        className="expense-filter-select"
-        value={current}
-        aria-label={`סינון ${key}`}
-        onClick={(e) => e.stopPropagation()}
-        onChange={(e) => setFilter(key, e.target.value)}
-      >
-        <option value="">סינון</option>
-        {items.map((item) => (
-          <option key={String(item)} value={String(item)}>
-            {labelFor(item)}
-          </option>
-        ))}
-      </select>
-    );
+  .topbar h1 {
+    font-size: 20px;
   }
 
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <div>
-          <h2>הוצאות</h2>
-          <p>
-            {filtered.length} הוצאות · סה״כ {money(total)}
-          </p>
-        </div>
-        <button className="primary" onClick={onAdd}>
-          ＋ הוצאה
-        </button>
-      </div>
-
-      <div className="payment-summary">
-        <div className="payment-summary-head">
-          <div>
-            <h3>הוצאות לפי אמצעי תשלום וכרטיס</h3>
-            <p>כרטיסי אשראי מסוכמים לפי חברה ו־4 ספרות אחרונות</p>
-          </div>
-          <strong>{money(total)}</strong>
-        </div>
-        {paymentSummary.length ? (
-          <Bars data={paymentSummary} />
-        ) : (
-          <Empty text="אין הוצאות שתואמות לסינון." />
-        )}
-      </div>
-
-      <div className="expenses-table-wrap">
-        <table className="expenses-data-table">
-          <thead>
-            <tr>
-              <th>
-                <div className="expense-column-head">
-                  <button className="sort-head" onClick={() => toggleSort("date")}>
-                    תאריך {sortIcon("date")}
-                  </button>
-                  {filterMenu("date", options.date, dateText)}
-                </div>
-              </th>
-              <th>
-                <div className="expense-column-head">
-                  <button
-                    className="sort-head"
-                    onClick={() => toggleSort("description")}
-                  >
-                    תיאור {sortIcon("description")}
-                  </button>
-                  {filterMenu("description", options.description)}
-                </div>
-              </th>
-              <th>
-                <div className="expense-column-head">
-                  <span>קטגוריה</span>
-                  {filterMenu(
-                    "category_id",
-                    options.category,
-                    (x) => categoryMap[x] || "ללא קטגוריה"
-                  )}
-                </div>
-              </th>
-              <th>
-                <div className="expense-column-head">
-                  <button
-                    className="sort-head"
-                    onClick={() => toggleSort("amount")}
-                  >
-                    סכום {sortIcon("amount")}
-                  </button>
-                  {filterMenu("amount", options.amount, money)}
-                </div>
-              </th>
-              <th>
-                <div className="expense-column-head">
-                  <button
-                    className="sort-head"
-                    onClick={() => toggleSort("payment")}
-                  >
-                    אופן תשלום {sortIcon("payment")}
-                  </button>
-                  {filterMenu(
-                    "payment",
-                    options.payment,
-                    (x) => paymentMethodLabel({ payment_method: x })
-                  )}
-                </div>
-              </th>
-              <th>
-                <div className="expense-column-head">
-                  <button
-                    className="sort-head"
-                    onClick={() => toggleSort("card")}
-                  >
-                    4 ספרות אחרונות {sortIcon("card")}
-                  </button>
-                  {filterMenu(
-                    "cardLast4",
-                    options.card,
-                    (x) => `•••• ${x}`
-                  )}
-                </div>
-              </th>
-              <th className="expense-actions-header">פעולות</th>
-            </tr>
-          </thead>
-
-          <tbody>
-            {sorted.map((t) => (
-              <tr
-                key={t.id}
-                onClick={() => onOpen(t)}
-                className="expenses-data-row"
-              >
-                <td>{dateText(t.transaction_date)}</td>
-                <td>
-                  <strong>{t.description || "ללא תיאור"}</strong>
-                  {t.merchant && <small>{t.merchant}</small>}
-                </td>
-                <td>{categoryMap[t.category_id] || "ללא קטגוריה"}</td>
-                <td className="negative">
-                  <strong>{money(t.actual_amount)}</strong>
-                </td>
-                <td>{paymentMethodLabel(t)}</td>
-                <td>
-                  {cardLast4(t) ? `•••• ${cardLast4(t)}` : "—"}
-                </td>
-                <td className="expense-actions-cell">
-                  <button
-                    type="button"
-                    className="icon danger"
-                    title="מחיקת הוצאה"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDelete(t);
-                    }}
-                  >
-                    ×
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-
-        {!sorted.length && <Empty text="אין הוצאות שתואמות לסינון." />}
-      </div>
-    </section>
-  );
-}
-
-function TransactionTable({
-  transactions,
-  categoryMap,
-  memberMap,
-  onEdit,
-  onDelete,
-}) {
-  return (
-    <div className="table-wrap transaction-table-wrap income-table-wrap">
-      <table className="income-table">
-        <thead>
-          <tr>
-            <th>תאריך</th>
-            <th>תיאור</th>
-            <th>קטגוריה</th>
-            <th>סוג</th>
-            <th>מצופה</th>
-            <th>בפועל</th>
-            <th>מי</th>
-            <th>פעולות</th>
-          </tr>
-        </thead>
-
-        <tbody>
-          {transactions.map((t) => {
-            const income = t.kind === "income";
-
-            return (
-              <tr key={t.id}>
-                <td>{dateText(t.transaction_date)}</td>
-                <td>
-                  <strong>{t.description || "ללא תיאור"}</strong>
-                  {t.merchant && (
-                    <small className="table-sub">{t.merchant}</small>
-                  )}
-                  {t.credit_card_last4 && (
-                    <small className="table-sub">
-                      •••• {t.credit_card_last4}
-                    </small>
-                  )}
-                </td>
-                <td>{categoryMap[t.category_id] || "ללא קטגוריה"}</td>
-
-                <td>
-                  <span
-                    className={`badge ${
-                      t.expense_type === "fixed" ? "fixed" : "variable"
-                    }`}
-                  >
-                    {t.expense_type === "fixed" ? "קבועה" : "משתנה"}
-                  </span>
-                </td>
-
-                <td>
-                  {t.expense_type === "fixed"
-                    ? money(t.planned_amount)
-                    : "—"}
-                </td>
-
-                <td className={income ? "positive" : "negative"}>
-                  {t.actual_amount === null
-                    ? "—"
-                    : money(t.actual_amount)}
-                </td>
-                <td>{memberMap[t.person_user_id] || "לא צוין"}</td>
-                <td>
-                  <div className="table-actions">
-                    <button
-                      className="icon"
-                      title="עריכה"
-                      onClick={() =>
-                        onEdit(t, income ? "income" : "expense")
-                      }
-                    >
-                      ✎
-                    </button>
-                    <button
-                      className="icon danger"
-                      title="מחיקה"
-                      onClick={() => onDelete(t)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-
-      {!transactions.length && <Empty text="אין תנועות בחודש הזה." />}
-    </div>
-  );
-}
-
-function CreditImportView({
-  rows,
-  fileName,
-  provider,
-  loading,
-  error,
-  result,
-  categories,
-  onFile,
-  onImport,
-  onRows,
-}) {
-  const ready = rows.filter((r) => r.selected && !r.duplicate && !r.ignored).length;
-  const duplicates = rows.filter((r) => r.duplicate).length;
-  const ignored = rows.filter((r) => r.ignored).length;
-  const [editingId, setEditingId] = useState(null);
-
-  const editingRow = rows.find((r) => r.id === editingId) || null;
-
-  function updateRow(id, patch) {
-    onRows(rows.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  .user-name {
+    display: none;
   }
 
-  function toggleAll(checked) {
-    onRows(
-      rows.map((r) => ({
-        ...r,
-        selected: checked && !r.duplicate && !r.ignored,
-      }))
-    );
+  /* MONTH */
+
+  .monthbar {
+    min-height: 64px;
+    gap: 8px;
   }
 
-  function saveEdit(patch) {
-    if (!editingRow) return;
-    updateRow(editingRow.id, patch);
-    setEditingId(null);
+  .monthbar strong {
+    min-width: 0;
+    flex: 1;
+    font-size: 19px;
   }
 
-  return (
-    <section className="panel">
-      <div className="panel-head">
-        <div>
-          <h2>יבוא אשראי</h2>
-          <p>
-            ניתן לבחור כמה קבצי CSV יחד. נתמכים הקבצים שהעלית מישראכרט / Fly
-            Card / Mastercard.
-          </p>
-        </div>
-      </div>
-
-      <div className="credit-import-box">
-        <label className="file-picker">
-          בחירת קובץ/י CSV
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            multiple
-            onChange={(e) => onFile(e.target.files)}
-          />
-        </label>
-
-        {fileName && (
-          <div style={{ marginTop: 10 }}>
-            קבצים: <strong>{fileName}</strong>
-            {provider && (
-              <>
-                {" "}· חברת אשראי: <strong>{providerLabel(provider)}</strong>
-              </>
-            )}
-          </div>
-        )}
-
-        <p className="muted" style={{ marginTop: 10 }}>
-          המערכת מזהה אוטומטית את שורת הכותרות גם כשהיא נמצאת באמצע הקובץ,
-          משתמשת ב<strong>סכום חיוב</strong>, מזהה 4 ספרות, תשלומים ושורות
-          סיכום, ומונעת כפילויות. לעריכת עסקה לחצי על <strong>עריכה</strong>.
-        </p>
-      </div>
-
-      {loading && (
-        <div className="import-loading">קוראת את הקבצים / מייבאת נתונים…</div>
-      )}
-
-      {error && <div className="error">{error}</div>}
-
-      {result && (
-        <div className="success-box">
-          יובאו בהצלחה {result.imported} עסקאות. דולגו {result.skipped} שורות שלא נבחרו או שכבר קיימות.
-        </div>
-      )}
-
-      {rows.length > 0 && (
-        <>
-          <div className="import-summary">
-            <span>סה״כ שורות: <strong>{rows.length}</strong></span>
-            <span>חדשות לבחירה: <strong>{ready}</strong></span>
-            <span>כפילויות: <strong>{duplicates}</strong></span>
-            <span>שורות שאינן עסקאות: <strong>{ignored}</strong></span>
-          </div>
-
-          <div className="import-actions">
-            <label style={{ flexDirection: "row", alignItems: "center" }}>
-              <input
-                type="checkbox"
-                style={{ width: "auto" }}
-                checked={ready > 0 && ready === rows.filter((r) => !r.duplicate && !r.ignored).length}
-                onChange={(e) => toggleAll(e.target.checked)}
-              />
-              בחירת כל העסקאות החדשות
-            </label>
-
-            <button className="primary" disabled={!ready || loading} onClick={onImport}>
-              ייבוא {ready} עסקאות
-            </button>
-          </div>
-
-          <div className="credit-import-table-wrap">
-            <table className="credit-import-table">
-              <thead>
-                <tr>
-                  <th>ייבוא</th>
-                  <th>תאריך</th>
-                  <th>בית עסק</th>
-                  <th>סכום חיוב</th>
-                  <th>כרטיס</th>
-                  <th>קטגוריה</th>
-                  <th>סוג</th>
-                  <th>עריכה</th>
-                  <th>סימון</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr
-                    key={r.id}
-                    className={r.duplicate ? "duplicate-row" : r.ignored ? "ignored-row" : ""}
-                  >
-                    <td>
-                      <input
-                        type="checkbox"
-                        checked={Boolean(r.selected)}
-                        disabled={r.duplicate || r.ignored || loading}
-                        onChange={(e) => updateRow(r.id, { selected: e.target.checked })}
-                      />
-                    </td>
-                    <td>{dateText(r.date)}</td>
-                    <td><strong>{r.merchant || r.description || "—"}</strong></td>
-                    <td>{money(r.amount)}</td>
-                    <td>{r.last4 ? `•••• ${r.last4}` : "—"}</td>
-                    <td>{categories.find((c) => c.id === r.category_id)?.name || "ללא קטגוריה"}</td>
-                    <td>{r.expense_type === "fixed" ? "קבועה" : "משתנה"}</td>
-                    <td>
-                      {!r.duplicate && !r.ignored && (
-                        <button
-                          type="button"
-                          className="ghost"
-                          disabled={loading}
-                          onClick={() => setEditingId(r.id)}
-                        >
-                          ✏️ עריכה
-                        </button>
-                      )}
-                    </td>
-                    <td>
-                      {r.duplicate ? "כפילות" : r.ignored ? "לא עסקה" : r.recurring ? "עסקה חוזרת" : r.status === "imported" ? "יובא" : "חדש"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
-
-      {editingRow && (
-        <Modal title="עדכון הוצאה לפני ייבוא" onClose={() => setEditingId(null)}>
-          <div className="form-grid">
-            <label>
-              תאריך
-              <input value={dateText(editingRow.date)} readOnly />
-            </label>
-            <label>
-              בית עסק
-              <input value={editingRow.merchant || ""} readOnly />
-            </label>
-          </div>
-
-          <label>
-            תיאור
-            <input
-              autoFocus
-              value={editingRow.description || ""}
-              onChange={(e) => updateRow(editingRow.id, { description: e.target.value })}
-              placeholder="הכניסי תיאור"
-            />
-          </label>
-
-          <div className="form-grid">
-            <label>
-              סכום בפועל
-              <input value={money(editingRow.amount)} readOnly />
-            </label>
-            <label>
-              סוג הוצאה
-              <select
-                value={editingRow.expense_type || "variable"}
-                onChange={(e) =>
-                  updateRow(editingRow.id, {
-                    expense_type: e.target.value,
-                    planned_amount:
-                      e.target.value === "fixed"
-                        ? editingRow.planned_amount || editingRow.amount
-                        : editingRow.planned_amount,
-                  })
-                }
-              >
-                <option value="variable">משתנה</option>
-                <option value="fixed">קבועה</option>
-              </select>
-            </label>
-          </div>
-
-          {editingRow.expense_type === "fixed" && (
-            <label>
-              סכום מתוכנן חודשי
-              <input
-                type="number"
-                min="0"
-                step="0.01"
-                value={editingRow.planned_amount ?? editingRow.amount}
-                onChange={(e) => updateRow(editingRow.id, { planned_amount: e.target.value })}
-              />
-            </label>
-          )}
-
-          <label>
-            קטגוריה
-            <select
-              value={editingRow.category_id || ""}
-              onChange={(e) => updateRow(editingRow.id, { category_id: e.target.value, category_manual: true })}
-            >
-              <option value="">ללא קטגוריה</option>
-              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          </label>
-
-          <div className="form-grid">
-            <label>
-              חברת אשראי
-              <input value={providerLabel(editingRow.provider)} readOnly />
-            </label>
-            <label>
-              4 ספרות אחרונות
-              <input value={editingRow.last4 || ""} readOnly />
-            </label>
-          </div>
-
-          <div className="modal-actions">
-            <button type="button" className="ghost" onClick={() => setEditingId(null)}>ביטול</button>
-            <button
-              type="button"
-              className="primary"
-              onClick={() => setEditingId(null)}
-            >
-              שמירת השינויים
-            </button>
-          </div>
-        </Modal>
-      )}
-    </section>
-  );
-}
-
-function normalizeCsvHeader(value) {
-  return String(value || "")
-    .replace(/^\uFEFF/, "")
-    .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
-    .replace(/\r?\n/g, "")
-    .trim()
-    .toLowerCase()
-    .replace(/[\u0591-\u05C7]/g, "")
-    .replace(/[\s_\-./()'":]+/g, "");
-}
-
-function detectCsvDelimiter(text) {
-  const sample = String(text || "")
-    .split(/\r?\n/)
-    .slice(0, 40)
-    .join("\n");
-
-  const counts = [",", ";", "\t"].map((d) => ({
-    d,
-    n: (sample.match(new RegExp(`\\${d}`, "g")) || []).length,
-  }));
-
-  return counts.sort((a, b) => b.n - a.n)[0]?.d || ",";
-}
-
-function parseCsvMatrix(text, delimiter) {
-  const rows = [];
-  let row = [];
-  let cell = "";
-  let quoted = false;
-
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (ch === '"') {
-      if (quoted && next === '"') {
-        cell += '"';
-        i++;
-      } else {
-        quoted = !quoted;
-      }
-    } else if (ch === delimiter && !quoted) {
-      row.push(cell.trim());
-      cell = "";
-    } else if ((ch === "\n" || ch === "\r") && !quoted) {
-      if (ch === "\r" && next === "\n") i++;
-      row.push(cell.trim());
-      cell = "";
-
-      if (row.some((x) => x !== "")) rows.push(row);
-      row = [];
-    } else {
-      cell += ch;
-    }
+  .month-arrow {
+    width: 42px;
+    height: 42px;
+    flex: 0 0 42px;
   }
 
-  row.push(cell.trim());
-  if (row.some((x) => x !== "")) rows.push(row);
+  /* TABS */
 
-  return rows;
-}
-
-function findHeaderRow(matrix) {
-  const normalizedRows = matrix.map((row) =>
-    row.map(normalizeCsvHeader)
-  );
-
-  const has = (row, aliases) =>
-    aliases.some((alias) =>
-      row.some((cell) => cell === normalizeCsvHeader(alias))
-    );
-
-  const idx = normalizedRows.findIndex((row) => {
-    const date =
-      has(row, [
-        "תאריך רכישה",
-        "תאריך עסקה",
-        "תאריך עסקה/חיוב",
-        "תאריך עסקה חיוב",
-        "תאריך",
-        "transaction date",
-        "purchase date",
-        "date",
-      ]);
-
-    const merchant = has(row, [
-      "שם בית העסק",
-      "שם בית עסק",
-      "בית עסק",
-      "שם העסק",
-      "תיאור",
-      "merchant",
-      "description",
-      "business name",
-    ]);
-
-    const amount = has(row, [
-      "סכום חיוב",
-      "סכום לחיוב",
-      "חיוב",
-      "charge amount",
-      "charged amount",
-      "amount charged",
-      "debit",
-      "סכום עסקה",
-      "סכום העסקה",
-      "purchase amount",
-      "transaction amount",
-      "amount",
-    ]);
-
-    return date && merchant && amount;
-  });
-
-  return idx >= 0 ? idx : -1;
-}
-
-function csvColumn(headers, aliases) {
-  const normalized = headers.map(normalizeCsvHeader);
-
-  for (const alias of aliases) {
-    const wanted = normalizeCsvHeader(alias);
-    const exact = normalized.indexOf(wanted);
-    if (exact >= 0) return exact;
+  .tabs {
+    width: calc(100% + 2px);
+    margin-right: -1px;
+    margin-left: -1px;
+    gap: 2px;
   }
 
-  const partial = normalized.findIndex((h) =>
-    aliases.some((a) => {
-      const aa = normalizeCsvHeader(a);
-      return h.includes(aa) || aa.includes(h);
-    })
-  );
-
-  return partial >= 0 ? partial : -1;
-}
-
-function parseCreditAmount(value) {
-  let s = String(value ?? "").trim();
-  if (!s) return null;
-
-  const negative =
-    /^\s*\(.*\)\s*$/.test(s) ||
-    s.includes("-") ||
-    /(^|\s)זיכוי(\s|$)/i.test(s);
-
-  s = s
-    .replace(/[₪$€£]/g, "")
-    .replace(/\s/g, "")
-    .replace(/[()]/g, "")
-    .replace(/זיכוי/gi, "");
-
-  if (s.includes(",") && s.includes(".")) {
-    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
-      s = s.replace(/\./g, "").replace(",", ".");
-    } else {
-      s = s.replace(/,/g, "");
-    }
-  } else if (s.includes(",")) {
-    const parts = s.split(",");
-    s =
-      parts.length === 2 && parts[1].length <= 2
-        ? parts[0] + "." + parts[1]
-        : parts.join("");
+  .tab {
+    flex: 0 0 auto;
+    padding: 10px 12px;
+    font-size: 16px;
   }
 
-  const n = Number(s.replace(/[^0-9.\-]/g, ""));
-  if (!Number.isFinite(n)) return null;
+  /* TITLES */
 
-  return Math.abs(n) * (negative ? -1 : 1);
-}
-
-function parseCreditDate(value) {
-  const s = String(value || "").trim();
-  if (!s) return "";
-
-  let m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/);
-
-  if (m) {
-    let y = Number(m[3]);
-    if (y < 100) y += 2000;
-
-    return `${y}-${String(Number(m[2])).padStart(2, "0")}-${String(
-      Number(m[1])
-    ).padStart(2, "0")}`;
+  .page-title {
+    align-items: flex-end;
   }
 
-  const d = new Date(s);
-  if (!Number.isNaN(d.getTime())) {
-    return `${d.getFullYear()}-${String(
-      d.getMonth() + 1
-    ).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  .page-title h2 {
+    font-size: 20px;
   }
 
-  return "";
-}
-
-function detectCreditProvider(fileName, headers, text) {
-  const clean = `${fileName} ${headers.join(" ")} ${String(text).slice(
-    0,
-    8000
-  )}`
-    .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
-    .toLowerCase();
-
-  // FLYCARD must be checked before ישראכרט because its footer can also
-  // contain the word ישראכרט.
-  if (
-    clean.includes("flycard") ||
-    clean.includes("fly card") ||
-    clean.includes("fly-card")
-  )
-    return "flycard";
-
-  if (
-    clean.includes("ישראכרט") ||
-    clean.includes("isracard") ||
-    clean.includes("ויזה קלסיק")
-  )
-    return "isracard";
-
-  if (clean.includes("כאל") || clean.includes("cal"))
-    return "cal";
-
-  if (clean.includes("max"))
-    return "max";
-
-  // The Isracard/FlyCard CSV layout itself is a reliable signal.
-  const normalizedHeaders = headers.map(normalizeCsvHeader);
-  if (
-    normalizedHeaders.includes("תאריךרכישה") &&
-    normalizedHeaders.includes("שםביתעסק") &&
-    normalizedHeaders.includes("סכוםחיוב")
-  ) {
-    return "isracard";
+  .page-title p {
+    font-size: 12px;
   }
 
-  if (
-    normalizedHeaders.includes("תאריךעסקה") &&
-    normalizedHeaders.includes("שםביתעסק") &&
-    normalizedHeaders.includes("סכוםחיוב")
-  ) {
-    return "cal";
+  .page-title .primary {
+    padding: 9px 11px;
+    font-size: 13px;
   }
 
-  return "other";
-}
-
-function providerLabel(value) {
-  return {
-    isracard: "ישראכרט",
-    cal: "כאל",
-    max: "MAX",
-    flycard: "Fly Card",
-    other: "לא זוהה",
-  }[value] || "לא זוהה";
-}
-
-function extractCardLast4(fileName, text) {
-  const clean = String(text || "")
-    .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
-    .replace(/\r?\n/g, " ");
-
-  const candidates = [
-    clean.match(/מסתיים\s*ב[-\s]*(\d{4})/i),
-    clean.match(/(?:כרטיס|card)[^0-9]{0,30}(\d{4})/i),
-    String(fileName || "").match(/(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/),
-  ];
-
-  for (const m of candidates) {
-    if (m?.[1]) return m[1];
+  .panel-head {
+    align-items: flex-start;
   }
 
-  return "";
-}
-
-function creditRowLooksIgnored(description, status, date, amount) {
-  const s = `${description || ""} ${status || ""}`.toLowerCase();
-
-  if (!date || amount === null || amount === undefined) return true;
-
-  return /סה.?כ|total|סכום כולל|יתרה|balance|מסגרת|credit limit|תאריך הפקה|תנאים משפטיים|הנתונים במסך/.test(
-    s
-  );
-}
-
-function creditRowLooksRecurring(description, status, extra) {
-  const s = `${description || ""} ${status || ""} ${extra || ""}`.toLowerCase();
-
-  return /הוראת קבע|עסקה מתמשכת|מנוי|חודשי|recurring|subscription|standing order|direct debit/.test(
-    s
-  );
-}
-
-function findCategoryFromSource(source, categories) {
-  const s = String(source || "").trim().toLowerCase();
-  if (!s) return "";
-
-  const exact = categories.find(
-    (c) => String(c.name || "").trim().toLowerCase() === s
-  );
-  if (exact) return exact.id;
-
-  return guessCategoryId(s, categories);
-}
-
-function guessCategoryId(text, categories) {
-  const s = String(text || "").toLowerCase();
-
-  const rules = [
-    [["שופרסל", "רמי לוי", "ויקטורי", "יינות ביתן", "מגה", "סופר", "market", "wolt market", "carrefour", "am:pm", "מזון ומשקאות"], ["מזון", "סופר"]],
-    [["דלק", "sonol", "paz", "dor alon", "delek", "fuel", "תחנות דלק"], ["רכב", "דלק"]],
-    [["מסעד", "restaurant", "cafe", "coffee", "פיצה", "סושי", "wolt", "תן ביס", "10bis", "מסעדות"], ["מסעדות", "אוכל בחוץ"]],
-    [["amazon", "aliexpress", "shein", "terminal x", "shopping", "קניות"], ["קניות", "שונות"]],
-    [["netflix", "spotify", "disney", "youtube", "apple.com", "google", "subscription", "מנויים"], ["מנויים", "בילויים"]],
-    [["bezeq", "hot", "cellcom", "partner", "pelephone", "internet", "תקשורת"], ["תקשורת", "חשבונות"]],
-    [["pharmacy", "super-pharm", "סופר פארם", "רופא", "clinic", "medical", "רפואה", "בריאות"], ["בריאות", "בריאות ורפואה"]],
-    [["חינוך", "בית ספר", "גן", "קורס"], ["חינוך"]],
-    [["דירה", "שכירות", "משכנתא", "ארנונה", "חשמל", "מים", "ועד בית"], ["דיור", "חשבונות"]],
-  ];
-
-  for (const [keywords, names] of rules) {
-    if (!keywords.some((k) => s.includes(k.toLowerCase()))) continue;
-
-    const c = categories.find((x) =>
-      names.some((n) =>
-        String(x.name || "").toLowerCase().includes(n.toLowerCase())
-      )
-    );
-
-    if (c) return c.id;
+  .panel-head h2 {
+    font-size: 19px;
   }
 
-  return "";
-}
-
-function creditDuplicateKey(row) {
-  const date = String(row.transaction_date || row.date || "");
-  const amount = Number(row.actual_amount ?? row.amount ?? 0).toFixed(2);
-  const provider = String(
-    row.credit_card_provider ?? row.provider ?? ""
-  ).toLowerCase();
-  const last4 = String(
-    row.credit_card_last4 ?? row.last4 ?? ""
-  ).slice(-4);
-  const merchant = String(row.merchant || row.description || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, " ");
-
-  return [date, amount, provider, last4, merchant].join("|");
-}
-
-function cardLast4(tx) {
-  return tx.payment_method === "credit_card" && tx.credit_card_last4
-    ? String(tx.credit_card_last4).slice(-4)
-    : "";
-}
-
-function parseCreditCsv(text, fileName) {
-  const delimiter = detectCsvDelimiter(text);
-  const matrix = parseCsvMatrix(text, delimiter);
-
-  if (!matrix.length) return { provider: "other", rows: [] };
-
-  const headerIndex = findHeaderRow(matrix);
-  if (headerIndex < 0) return { provider: "other", rows: [] };
-
-  const headers = matrix[headerIndex];
-  const provider = detectCreditProvider(fileName, headers, text);
-  const fileLast4 = extractCardLast4(fileName, text);
-
-  const dateCol = csvColumn(headers, [
-    "תאריך רכישה",
-    "תאריך עסקה",
-    "תאריך עסקה/חיוב",
-    "תאריך עסקה חיוב",
-    "תאריך",
-    "transaction date",
-    "purchase date",
-    "date",
-  ]);
-
-  const merchantCol = csvColumn(headers, [
-    "שם בית העסק",
-    "בית עסק",
-    "שם העסק",
-    "תיאור",
-    "merchant",
-    "description",
-    "business name",
-  ]);
-
-  const chargeCol = csvColumn(headers, [
-    "סכום חיוב",
-    "סכום לחיוב",
-    "חיוב",
-    "charge amount",
-    "charged amount",
-    "amount charged",
-    "debit",
-  ]);
-
-  const purchaseCol = csvColumn(headers, [
-    "סכום עסקה",
-    "סכום העסקה",
-    "purchase amount",
-    "transaction amount",
-    "amount",
-  ]);
-
-  const categoryCol = csvColumn(headers, [
-    "קטגוריה",
-    "category",
-    "ענף",
-  ]);
-
-  const last4Col = csvColumn(headers, [
-    "4 ספרות",
-    "4 ספרות אחרונות",
-    "מספר כרטיס",
-    "כרטיס",
-    "last 4",
-    "last4",
-    "card number",
-  ]);
-
-  const providerCol = csvColumn(headers, [
-    "חברת אשראי",
-    "מנפיק",
-    "issuer",
-    "card provider",
-    "provider",
-  ]);
-
-  const statusCol = csvColumn(headers, [
-    "סטטוס",
-    "status",
-    "סוג עסקה",
-    "transaction type",
-  ]);
-
-  const extraCol = csvColumn(headers, [
-    "פירוט נוסף",
-    "הערות",
-    "notes",
-    "details",
-  ]);
-
-  if (
-    dateCol < 0 ||
-    merchantCol < 0 ||
-    (chargeCol < 0 && purchaseCol < 0)
-  ) {
-    return { provider, rows: [] };
+  .panel-head p {
+    font-size: 12px;
   }
 
-  const rows = [];
+  /* CARDS */
 
-  for (let i = headerIndex + 1; i < matrix.length; i++) {
-    const cells = matrix[i];
-
-    const date = parseCreditDate(cells[dateCol] || "");
-    const description = String(cells[merchantCol] || "").trim();
-
-    const charge =
-      chargeCol >= 0 ? parseCreditAmount(cells[chargeCol]) : null;
-
-    const purchase =
-      purchaseCol >= 0 ? parseCreditAmount(cells[purchaseCol]) : null;
-
-    // Always prefer "סכום חיוב" when present.
-    const amount =
-      charge !== null && charge !== undefined ? charge : purchase;
-
-    const status =
-      statusCol >= 0 ? String(cells[statusCol] || "").trim() : "";
-
-    const extra =
-      extraCol >= 0 ? String(cells[extraCol] || "").trim() : "";
-
-    const last4 =
-      (last4Col >= 0 ? String(cells[last4Col] || "") : "")
-        .replace(/\D/g, "")
-        .slice(-4) || fileLast4;
-
-    const providerCell =
-      providerCol >= 0
-        ? String(cells[providerCol] || "").toLowerCase()
-        : "";
-
-    let rowProvider = provider;
-
-    if (
-      providerCell.includes("fly") ||
-      providerCell.includes("flycard")
-    )
-      rowProvider = "flycard";
-    else if (
-      providerCell.includes("ישראכרט") ||
-      providerCell.includes("isracard")
-    )
-      rowProvider = "isracard";
-    else if (
-      providerCell.includes("כאל") ||
-      providerCell.includes("cal")
-    )
-      rowProvider = "cal";
-    else if (providerCell.includes("max"))
-      rowProvider = "max";
-
-    const ignored =
-      creditRowLooksIgnored(description, status, date, amount) ||
-      !description ||
-      amount === null ||
-      amount === undefined ||
-      amount === 0;
-
-    if (ignored) continue;
-
-    const numericAmount = Number(amount);
-
-    rows.push({
-      date,
-      description,
-      merchant: description,
-      amount: Number.isFinite(numericAmount)
-        ? numericAmount
-        : 0,
-      provider: rowProvider,
-      last4,
-      sourceCategory:
-        categoryCol >= 0
-          ? String(cells[categoryCol] || "").trim()
-          : "",
-      recurring: creditRowLooksRecurring(
-        description,
-        status,
-        extra
-      ),
-      ignored: false,
-      credit: numericAmount < 0,
-      transactionType: status,
-      extra,
-    });
+  .cards {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
   }
 
-  return { provider, rows };
+  .stat {
+    padding: 11px;
+  }
+
+  .stat strong {
+    font-size: 17px;
+  }
+
+  /* PANELS */
+
+  .panel {
+    padding: 12px;
+    border-radius: 14px;
+  }
+
+  /* CHARTS */
+
+  .chart-row {
+    grid-template-columns: 70px minmax(0, 1fr) auto;
+    gap: 6px;
+  }
+
+  .chart-label {
+    font-size: 11px;
+  }
+
+  .chart-row strong {
+    font-size: 11px;
+  }
+
+  /* =====================================================
+     MOBILE EXPENSES
+
+     ExpensesView has 5 columns:
+     date | description | amount | payment | card last4
+  ===================================================== */
+
+  .table-wrap {
+    width: 100%;
+    max-width: 100%;
+    margin-top: 12px;
+    overflow: visible !important;
+  }
+
+  .transactions-table {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    display: block !important;
+    border-collapse: separate !important;
+    border-spacing: 0 !important;
+  }
+
+  .transactions-table thead {
+    display: none !important;
+  }
+
+  .transactions-table tbody {
+    width: 100% !important;
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    gap: 10px !important;
+  }
+
+  .transactions-table tbody tr {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    display: grid !important;
+    grid-template-columns: 1fr 1fr !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff;
+    border: 1px solid #e2e6ee;
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  .transactions-table tbody td {
+    width: 100% !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    display: block !important;
+    margin: 0 !important;
+    padding: 10px 11px !important;
+    border: 0 !important;
+    border-bottom: 1px solid #edf0f4 !important;
+    text-align: right !important;
+    font-size: 13px;
+    line-height: 1.35;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+  }
+
+  .transactions-table tbody td::before {
+    display: block;
+    margin-bottom: 5px;
+    color: #8a93a3;
+    font-size: 10px;
+    line-height: 1;
+    font-weight: 700;
+  }
+
+  /* 5 columns of ExpensesView */
+  .expense-table tbody td:nth-child(1)::before {
+    content: "תאריך";
+  }
+
+  .expense-table tbody td:nth-child(2)::before {
+    content: "תיאור";
+  }
+
+  .expense-table tbody td:nth-child(3)::before {
+    content: "סכום";
+  }
+
+  .expense-table tbody td:nth-child(4)::before {
+    content: "אופן תשלום";
+  }
+
+  .expense-table tbody td:nth-child(5)::before {
+    content: "4 ספרות אחרונות";
+  }
+
+  /* Description gets the full row */
+  .expense-table tbody td:nth-child(2) {
+    grid-column: 1 / -1 !important;
+    font-size: 15px;
+  }
+
+  .expense-table tbody td:nth-child(2) {
+    border-bottom: 1px solid #edf0f4 !important;
+  }
+
+  .expense-table tbody td:nth-child(2) strong {
+    display: block;
+    font-size: 15px;
+    line-height: 1.3;
+  }
+
+  /* Last row */
+  .expense-table tbody td:nth-child(4),
+  .expense-table tbody td:nth-child(5) {
+    border-bottom: 0 !important;
+  }
+
+  .expense-table tbody td:nth-child(3) strong {
+    font-size: 15px;
+  }
+
+  .expense-table .table-sub {
+    display: block;
+    margin-top: 4px;
+    color: #858e9d;
+    font-size: 11px;
+  }
+
+  .transactions-table .badge {
+    display: inline-flex;
+    width: auto;
+  }
+
+  .transactions-table .table-actions {
+    display: flex;
+    justify-content: flex-start;
+    gap: 7px;
+  }
+
+  /* =====================================================
+     FIXED EXPENSES
+  ===================================================== */
+
+  .fixed-summary {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .fixed-summary .stat:last-child {
+    grid-column: 1 / -1;
+  }
+
+  .fixed-card {
+    width: 100%;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 9px;
+  }
+
+  .fixed-main {
+    min-width: 0;
+  }
+
+  .amounts {
+    grid-column: 1 / -1;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .row-actions {
+    justify-content: flex-end;
+  }
+
+  /* =====================================================
+     RECENT
+  ===================================================== */
+
+  .recent-row {
+    padding: 10px 0;
+  }
+
+  /* =====================================================
+     CATEGORY
+  ===================================================== */
+
+  .category-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .category-add {
+    flex-direction: column;
+  }
+
+  /* =====================================================
+     FORM
+  ===================================================== */
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* =====================================================
+     MODAL
+  ===================================================== */
+
+  .modal-backdrop {
+    padding: 10px;
+  }
+
+  .modal {
+    width: 100%;
+    max-height: 94vh;
+    border-radius: 14px;
+  }
+
+  .modal-body {
+    padding: 14px;
+  }
 }
 
-function Modal({ title, children, onClose }) {
-  return (
-    <div
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div className="modal">
-        <div className="modal-head">
-          <h2>{title}</h2>
-          <button className="modal-close" onClick={onClose}>
-            ×
-          </button>
-        </div>
-        <div className="modal-body">{children}</div>
-      </div>
-    </div>
-  );
+/* =========================================================
+   VERY SMALL PHONES
+========================================================= */
+
+@media (max-width: 380px) {
+
+  .app {
+    padding: 7px;
+  }
+
+  .cards {
+    gap: 6px;
+  }
+
+  .stat {
+    padding: 9px;
+  }
+
+  .stat strong {
+    font-size: 15px;
+  }
+
+  .tab {
+    padding: 9px 10px;
+    font-size: 14px;
+  }
+
+  .transactions-table tbody td {
+    padding: 8px 9px !important;
+    font-size: 12px;
+  }
+
+  .chart-row {
+    grid-template-columns: 60px minmax(0, 1fr) auto;
+  }
 }
+
+/* =========================
+   CLEAN TRANSACTION LIST
+========================= */
+
+.transaction-list {
+  width: 100%;
+  display: grid;
+  gap: 0;
+  margin-top: 12px;
+}
+
+.transaction-list-row {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 4px;
+  border: 0;
+  border-bottom: 1px solid #edf0f4;
+  background: transparent;
+  color: #202633;
+  text-align: right;
+  border-radius: 8px;
+}
+
+.transaction-list-row:hover {
+  background: #f7f8fc;
+}
+
+.transaction-list-row:last-child {
+  border-bottom: 0;
+}
+
+.transaction-date {
+  color: #7b8494;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.transaction-description {
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.transaction-list-row > strong {
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+@media (max-width: 600px) {
+  .transaction-list-row {
+    grid-template-columns: 90px minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 14px 2px;
+  }
+
+  .transaction-date {
+    font-size: 12px;
+  }
+
+  .transaction-description {
+    font-size: 15px;
+  }
+
+  .transaction-list-row > strong {
+    font-size: 15px;
+  }
+}
+
+/* redeploy latest version */
