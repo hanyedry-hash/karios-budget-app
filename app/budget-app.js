@@ -92,31 +92,55 @@ const calculateFutureBalance = (principal, annualRate, payment, months) => {
   return balance;
 };
 
+const toMoneyNumber = (v) => {
+  if (v === null || v === undefined || v === "") return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const cleaned = String(v).replace(/[₪,\s]/g, "").replace(/[^0-9.\-]/g, "");
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : 0;
+};
+
+const commitmentPayment = (c) => {
+  const value = c?.current_payment ?? c?.monthly_payment ?? c?.monthlyPayment ?? c?.payment_amount ?? c?.payment;
+  return Math.max(0, toMoneyNumber(value));
+};
+
+const commitmentBalance = (c) => {
+  const value = c?.current_balance ?? c?.remaining_balance ?? c?.balance ?? c?.outstanding_balance;
+  return Math.max(0, toMoneyNumber(value));
+};
+
 const commitmentTypeValue = (c) => {
-  const explicit = [c?.commitment_type, c?.housing_type, c?.loan_type, c?.type, c?.kind, c?.category]
+  // Prefer fields that are specifically intended to describe the commitment type.
+  // Generic fields such as `type`/`category` are intentionally not used because they can
+  // describe something else in an existing Supabase row.
+  const explicit = [c?.commitment_type, c?.housing_type, c?.loan_type, c?.commitment_kind]
     .find((v) => v !== null && v !== undefined && String(v).trim() !== "");
   if (explicit) {
     const v = String(explicit).toLowerCase().trim();
     if (/mortgage|משכנת|mort/.test(v)) return "mortgage";
-    if (/loan|הלווא|אשראי|personal.?loan|consumer|bank.?loan|הלוואה/.test(v)) return "loan";
+    if (/loan|הלווא|אשראי|personal.?loan|consumer|bank.?loan/.test(v)) return "loan";
     if (/other|אחר|commitment|התחייב/.test(v)) return "other";
   }
+
   const name = String(c?.name || "").toLowerCase();
-  if (/הלווא|loan|אשראי|personal.?loan|consumer/.test(name)) return "loan";
-  if (/משכנת|mortgage/.test(name)) return "mortgage";
-  // Existing mortgage records in this app are typically mortgage tracks and carry rate/indexation data.
-  // Do not classify an unrecognized record as a loan just because its type field is missing.
-  if (c?.indexation != null || c?.rate_formula != null || c?.rate_type != null) return "mortgage";
-  return "other";
+  if (/הלווא|loan|אשראי|personal.?loan|consumer|רכב|שיפוץ|אישית/.test(name)) return "loan";
+  if (/משכנת|mortgage|מסלול/.test(name)) return "mortgage";
+
+  // Mortgage tracks in the existing housing table carry mortgage-specific fields.
+  // If those fields are absent and no explicit type exists, treat the row as a loan
+  // rather than silently hiding it under "other".
+  if (c?.indexation != null || c?.rate_formula != null || c?.rate_type != null || c?.next_rate_change != null || c?.rate_change_months != null) return "mortgage";
+  return "loan";
 };
 const commitmentTypeLabel = (c) => ({ mortgage: "משכנתא", loan: "הלוואה", other: "התחייבות נוספת" }[commitmentTypeValue(c)] || "התחייבות נוספת");
 const commitmentTypePlural = (type) => ({ mortgage: "משכנתאות", loan: "הלוואות", other: "התחייבויות נוספות" }[type] || "התחייבויות");
-const scenarioNumber = (v) => v === "" || v == null || !Number.isFinite(Number(v)) ? null : Number(v);
+const scenarioNumber = (v) => v === "" || v == null || !Number.isFinite(toMoneyNumber(v)) ? null : toMoneyNumber(v);
 
 function forecastCommitment(c, startMonth, months, scenario = {}) {
   const n = Math.min(Math.max(Number(months || 1), 1), 360);
-  const startBalance = Math.max(0, Number(c.current_balance || 0));
-  const currentPayment = Math.max(0, Number(c.current_payment || 0));
+  const startBalance = Math.max(0, commitmentBalance(c));
+  const currentPayment = Math.max(0, commitmentPayment(c));
   const currentRateRaw = Number(c.interest_rate);
   const currentRate = Number.isFinite(currentRateRaw) ? currentRateRaw : null;
   const endMonth = normalizeDateMonth(c.end_date);
@@ -215,16 +239,21 @@ const calculateCurrentHousingState = (commitments) => {
   const rows = commitments || [];
   const mortgages = rows.filter((c) => commitmentTypeValue(c) === "mortgage");
   const loans = rows.filter((c) => commitmentTypeValue(c) === "loan");
-  const sum = (list, field) => list.reduce((s, c) => s + Number(c[field] || 0), 0);
+  const sumPayment = (list) => list.reduce((s, c) => s + commitmentPayment(c), 0);
+  const sumBalance = (list) => list.reduce((s, c) => s + commitmentBalance(c), 0);
+  const other = rows.filter((c) => commitmentTypeValue(c) === "other");
   return {
     mortgages,
     loans,
-    mortgagePayment: sum(mortgages, "current_payment"),
-    loanPayment: sum(loans, "current_payment"),
-    totalPayment: sum(rows, "current_payment"),
-    mortgageBalance: sum(mortgages, "current_balance"),
-    loanBalance: sum(loans, "current_balance"),
-    totalBalance: sum(rows, "current_balance"),
+    other,
+    mortgagePayment: sumPayment(mortgages),
+    loanPayment: sumPayment(loans),
+    otherPayment: sumPayment(other),
+    totalPayment: sumPayment(rows),
+    mortgageBalance: sumBalance(mortgages),
+    loanBalance: sumBalance(loans),
+    otherBalance: sumBalance(other),
+    totalBalance: sumBalance(rows),
   };
 };
 
@@ -1263,23 +1292,33 @@ export default function BudgetApp() {
         .housing-total-card span { display:block; opacity:.86; font-size:13px; margin-bottom:6px; }
         .housing-total-card strong { display:block; font-size:32px; line-height:1.1; }
         .housing-total-card small { display:block; margin-top:8px; opacity:.82; }
-        .housing-two-cards { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+        .housing-two-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
         .housing-mini-card { padding:15px; border:1px solid #e2e5ef; border-radius:15px; background:#fff; }
         .housing-mini-card span { display:block; color:#72798b; font-size:12px; margin-bottom:5px; }
         .housing-mini-card strong { font-size:22px; }
         .housing-section-card { margin-top:14px; padding:16px; border:1px solid #e2e5ef; border-radius:18px; background:#fff; }
+        .housing-forecast-card { overflow:hidden; }
+        .forecast-current-badge { min-width:118px; padding:8px 12px; border-radius:12px; background:#f2f3ff; text-align:center; }
+        .forecast-current-badge span { display:block; color:#70778a; font-size:11px; }
+        .forecast-current-badge strong { display:block; color:#4d59cf; font-size:18px; margin-top:2px; }
+        .forecast-controls.compact { margin:0 0 10px; grid-template-columns:1fr 1fr; }
+        .forecast-type-legend { display:flex; flex-wrap:wrap; gap:10px 18px; margin:8px 2px 12px; color:#626979; font-size:12px; }
+        .legend-dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-left:5px; background:#5662d8; }
+        .legend-dot.loan { background:#6f9bd9; }
+        .legend-dot.other { background:#70a68b; }
+
         .housing-section-head { display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:14px; }
         .housing-section-head h3 { margin:0 0 4px; }
         .housing-section-head p { margin:0; color:#747b8d; font-size:13px; }
         .housing-legend { font-size:12px; color:#73798a; margin-top:8px; }
-        .housing-chart-wrap { border:1px solid #eceef3; border-radius:16px; background:#fbfcff; overflow:hidden; padding:10px 8px 8px; }
-        .housing-chart { width:100%; height:300px; display:block; overflow:visible; }
+        .housing-chart-wrap { border:1px solid #e5e7f0; border-radius:18px; background:linear-gradient(180deg,#fbfcff 0%,#f7f8fc 100%); overflow:hidden; padding:8px 4px 4px; }
+        .housing-chart { width:100%; height:270px; display:block; overflow:visible; }
         .housing-chart-grid { stroke:#e7e9f0; stroke-width:1; }
         .housing-chart-axis { stroke:#cfd3df; stroke-width:1; }
-        .housing-chart-line { fill:none; stroke:#5864d8; stroke-width:3; stroke-linecap:round; stroke-linejoin:round; }
-        .housing-chart-point { fill:#fff; stroke:#d58b25; stroke-width:3; cursor:pointer; }
+        .housing-chart-line { fill:none; stroke:#5662d8; stroke-width:4; stroke-linecap:round; stroke-linejoin:round; }
+        .housing-chart-point { fill:#fff; stroke:#5662d8; stroke-width:3; cursor:pointer; }
         .housing-chart-unknown { stroke:#d58b25; stroke-width:2; stroke-dasharray:5 5; }
-        .housing-chart-label { font-size:11px; fill:#747b8d; }
+        .housing-chart-label { font-size:10px; fill:#747b8d; }
         .housing-chart-value { font-size:11px; fill:#3e4656; font-weight:700; }
         .housing-chart-tooltip { margin:0 0 8px; padding:11px 13px; border-radius:12px; background:#252b3a; color:#fff; font-size:13px; line-height:1.55; }
         .housing-chart-tooltip .muted { color:#d3d7e2; }
@@ -1315,7 +1354,7 @@ export default function BudgetApp() {
         .forecast-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
         .forecast-controls label { display:flex; flex-direction:column; gap:6px; font-size:12px; }
         @media (max-width:900px) { .housing-dashboard-card { grid-template-columns:1fr; } .housing-balance-grid { grid-template-columns:1fr; } .housing-balance-cards { grid-template-columns:1fr 1fr; } }
-        @media (max-width:560px) { .housing-two-cards,.housing-balance-cards,.housing-change-grid,.forecast-controls { grid-template-columns:1fr; } .housing-dashboard-stats { justify-content:space-between; } .housing-total-card strong { font-size:28px; } .housing-chart { height:250px; } .housing-section-card { padding:13px; } .housing-change-top { flex-direction:column; } }
+        @media (max-width:560px) { .housing-two-cards,.housing-balance-cards,.housing-change-grid,.forecast-controls { grid-template-columns:1fr; } .housing-dashboard-stats { justify-content:space-between; } .housing-total-card strong { font-size:28px; } .housing-chart { height:220px; } .housing-section-card { padding:13px; } .housing-change-top { flex-direction:column; } .housing-mini-card { padding:13px; } .forecast-current-badge { align-self:stretch; } .forecast-controls.compact { grid-template-columns:1fr 1fr; } }
 
         .expense-filters {
           display: grid;
@@ -1497,8 +1536,8 @@ function HousingForecastView({
     if (!list.length) return <div className="housing-empty">אין כרגע {commitmentTypePlural(type)} בנתונים הקיימים.</div>;
     return <div className="housing-commitment-list">{list.map((c) => (
       <div key={c.id} className="housing-commitment-card">
-        <div className="housing-commitment-card-top"><div><strong>{c.name || "ללא שם"}</strong><span className="housing-type-badge">{commitmentTypeLabel(c)}</span></div><strong>{money(c.current_payment)}</strong></div>
-        <div className="housing-commitment-card-meta">יתרה {money(c.current_balance)} · ריבית {c.interest_rate != null ? `${Number(c.interest_rate).toFixed(3)}%` : "לא ידועה"} · סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
+        <div className="housing-commitment-card-top"><div><strong>{c.name || "ללא שם"}</strong><span className="housing-type-badge">{commitmentTypeLabel(c)}</span></div><strong>{money(commitmentPayment(c))}</strong></div>
+        <div className="housing-commitment-card-meta">יתרה {money(commitmentBalance(c))} · ריבית {c.interest_rate != null ? `${Number(c.interest_rate).toFixed(3)}%` : "לא ידועה"} · סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
       </div>
     ))}</div>;
   };
@@ -1528,7 +1567,7 @@ function HousingForecastView({
         <div className="housing-two-cards">
           <div className="housing-mini-card"><span>משכנתאות · {grouped.mortgage.length}</span><strong>{money(state.mortgagePayment)}</strong></div>
           <div className="housing-mini-card"><span>הלוואות · {grouped.loan.length}</span><strong>{money(state.loanPayment)}</strong></div>
-          <div className="housing-mini-card"><span>התחייבויות נוספות · {grouped.other.length}</span><strong>{money(grouped.other.reduce((s,c)=>s+Number(c.current_payment||0),0))}</strong></div>
+          <div className="housing-mini-card"><span>התחייבויות נוספות · {grouped.other.length}</span><strong>{money(grouped.other.reduce((s,c)=>s+commitmentPayment(c),0))}</strong></div>
         </div>
       </section>
 
@@ -1551,13 +1590,17 @@ function HousingForecastView({
       {housingSubTab === 'other' && <section className="housing-section-card"><div className="housing-section-head"><div><h3>📌 התחייבויות נוספות</h3><p>התחייבויות שאינן מסווגות כמשכנתא או הלוואה.</p></div></div>{renderCommitmentCards('other')}</section>}
 
       {housingSubTab === 'summary' && <>
-        <section className="housing-section-card">
-          <div className="housing-section-head"><div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל</p></div></div>
-          <div className="forecast-controls">
-            <label>תחילת התחזית<input type="month" value={forecastStart} onChange={(e) => setForecastStart(e.target.value)} /></label>
-            <label>תקופת תחזית<select value={forecastMonths} onChange={(e) => setForecastMonths(Number(e.target.value))}><option value={24}>24 חודשים</option><option value={36}>3 שנים</option><option value={60}>5 שנים</option><option value={120}>10 שנים</option><option value={240}>20 שנים</option><option value={360}>30 שנים</option></select></label>
+        <section className="housing-section-card housing-forecast-card">
+          <div className="housing-section-head">
+            <div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל · מוצגות רק נקודות שינוי משמעותיות</p></div>
+            <div className="forecast-current-badge"><span>היום</span><strong>{money(state.totalPayment)}</strong></div>
           </div>
-          {selectedTooltip && <div className="housing-chart-tooltip"><div><strong>{monthLabel(selectedTooltip.month)}</strong></div><div>תשלום לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong></div><div>תשלום אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong></div><div>שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>{selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}<div className="muted">סיבה: {selectedTooltip.reason || "לא ידועה"}</div></div>}
+          <div className="forecast-controls compact">
+            <label>מתחיל מ־<input type="month" value={forecastStart} onChange={(e) => setForecastStart(e.target.value)} /></label>
+            <label>טווח<select value={forecastMonths} onChange={(e) => setForecastMonths(Number(e.target.value))}><option value={24}>24 חודשים</option><option value={36}>3 שנים</option><option value={60}>5 שנים</option><option value={120}>10 שנים</option><option value={240}>20 שנים</option><option value={360}>30 שנים</option></select></label>
+          </div>
+          <div className="forecast-type-legend"><span><i className="legend-dot mortgage"></i>משכנתאות {money(state.mortgagePayment)}</span><span><i className="legend-dot loan"></i>הלוואות {money(state.loanPayment)}</span>{state.otherPayment > 0 && <span><i className="legend-dot other"></i>אחרות {money(state.otherPayment)}</span>}</div>
+          {selectedTooltip && <div className="housing-chart-tooltip"><div><strong>{monthLabel(selectedTooltip.month)}</strong></div><div>לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong> · אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong> · שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>{selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}<div className="muted">{selectedTooltip.reason || "סיבה לא ידועה"}</div></div>}
           <div className="housing-chart-wrap"><svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
