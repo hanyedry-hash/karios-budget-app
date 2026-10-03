@@ -94,6 +94,7 @@ export default function BudgetApp() {
   const [loginError, setLoginError] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [confirm, setConfirm] = useState(null);
+  const [housingCommitments, setHousingCommitments] = useState([]);
 
   const [expenseFilters, setExpenseFilters] = useState({
     fromDate: "",
@@ -141,6 +142,7 @@ export default function BudgetApp() {
       setCategories([]);
       setTransactions([]);
       setRecurring([]);
+      setHousingCommitments([]);
     }
   }, [user, month]);
 
@@ -162,7 +164,7 @@ export default function BudgetApp() {
 
       const previousMonth = shiftMonth(month, -1);
 
-      const [m, c, t, previousFixedIncomeQuery, r] = await Promise.all([
+      const [m, c, t, previousFixedIncomeQuery, r, housingQuery] = await Promise.all([
         supabase.rpc("get_my_household_members"),
         supabase
           .from("categories")
@@ -194,6 +196,12 @@ export default function BudgetApp() {
           .eq("is_active", true)
           .order("day_of_month")
           .order("name"),
+        supabase
+          .from("housing_commitments")
+          .select("*")
+          .eq("household_id", householdId)
+          .order("end_date", { ascending: true, nullsFirst: false })
+          .order("name"),
       ]);
 
       if (m.error) console.error(m.error);
@@ -201,6 +209,8 @@ export default function BudgetApp() {
       if (t.error) console.error(t.error);
       if (previousFixedIncomeQuery.error) console.error(previousFixedIncomeQuery.error);
       if (r.error) console.error(r.error);
+      if (housingQuery.error) console.error(housingQuery.error);
+      setHousingCommitments(housingQuery.data || []);
 
       setProfiles(
         (m.data || []).map((x) => ({
@@ -1071,6 +1081,16 @@ export default function BudgetApp() {
     0
   );
 
+  const housingBalanceTotal = housingCommitments.reduce(
+    (s, h) => s + Number(h.current_balance || 0),
+    0
+  );
+
+  const housingPaymentTotal = housingCommitments.reduce(
+    (s, h) => s + Number(h.current_payment || 0),
+    0
+  );
+
   const typeChart = [
     { label: "קבועות", value: fixedActual },
     { label: "משתנות", value: variableActual },
@@ -1163,6 +1183,7 @@ export default function BudgetApp() {
           ["fixed", "הוצאות קבועות"],
           ["income", "הכנסות"],
           ["credit-import", "יבוא אשראי"],
+          ["housing", "🏠 דיור והתחייבויות"],
           ["categories", "קטגוריות"],
         ].map(([id, label]) => (
           <button
@@ -1407,6 +1428,86 @@ export default function BudgetApp() {
           onImport={importSelectedCreditRows}
           onRows={setCreditImportRows}
         />
+      )}
+
+      {tab === "housing" && (
+        <section className="panel housing-panel">
+          <div className="panel-head">
+            <div>
+              <h2>🏠 דיור והתחייבויות</h2>
+              <p>נתוני המשכנתאות כפי שנשמרו ב-Supabase.</p>
+            </div>
+            <button className="ghost" onClick={refresh}>רענון</button>
+          </div>
+
+          <div className="housing-summary">
+            <Stat
+              title="יתרת משכנתאות"
+              value={money(housingBalanceTotal)}
+            />
+            <Stat
+              title="תשלום חודשי לפי רכיבים"
+              value={money(housingPaymentTotal)}
+            />
+            <Stat
+              title="מספר התחייבויות"
+              value={String(housingCommitments.length)}
+            />
+          </div>
+
+          <div className="housing-note">
+            <strong>שים לב:</strong> התשלום החודשי המוצג בטבלה הוא הנתון שנשמר לכל הלוואה במסמך המקור.
+          </div>
+
+          {housingCommitments.length ? (
+            <div className="housing-table-wrap">
+              <table className="housing-table">
+                <thead>
+                  <tr>
+                    <th>הלוואה</th>
+                    <th>יתרה</th>
+                    <th>תשלום חודשי</th>
+                    <th>ריבית</th>
+                    <th>סוג</th>
+                    <th>הצמדה</th>
+                    <th>סיום</th>
+                    <th>שינוי ריבית</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {housingCommitments.map((h) => (
+                    <tr key={h.id}>
+                      <td>
+                        <strong>{h.name}</strong>
+                        <small>{h.loan_number}</small>
+                      </td>
+                      <td>{money(h.current_balance)}</td>
+                      <td>{money(h.current_payment)}</td>
+                      <td>
+                        {h.interest_rate != null
+                          ? `${Number(h.interest_rate).toFixed(3)}%`
+                          : "—"}
+                        {h.rate_formula ? (
+                          <small>{h.rate_formula}</small>
+                        ) : null}
+                      </td>
+                      <td>{h.rate_type || "—"}</td>
+                      <td>{h.indexation || "—"}</td>
+                      <td>{dateText(h.end_date)}</td>
+                      <td>
+                        {h.next_rate_change
+                          ? `${dateText(h.next_rate_change)}${h.rate_change_months ? ` · כל ${h.rate_change_months} ח׳` : ""}`
+                          : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty text="לא נמצאו התחייבויות דיור." />
+          )}
+        </section>
       )}
 
       {tab === "categories" && (
@@ -2060,138 +2161,29 @@ export default function BudgetApp() {
         }
         @media(max-width:560px) {
           .app { padding:10px; }
-
-          /* הכנסות במובייל מוצגות ככרטיסים מלאים — בלי גלילה אופקית */
-          .income-table-wrap {
-            overflow:visible;
-            border:0;
-            border-radius:0;
-          }
-
-          .income-table {
-            min-width:0 !important;
-            width:100% !important;
-            table-layout:fixed;
-            display:block;
-          }
-
-          .income-table thead {
-            display:none;
-          }
-
-          .income-table tbody {
-            display:grid;
-            gap:10px;
-          }
-
-          .income-table tr {
-            display:grid;
-            grid-template-columns:1fr 1fr;
-            width:100%;
-            border:1px solid #e3e5ed;
-            border-radius:12px;
-            background:#fff;
-            overflow:hidden;
-          }
-
-          .income-table td {
-            display:flex;
-            align-items:flex-start;
-            justify-content:space-between;
-            gap:8px;
-            min-width:0 !important;
-            width:auto !important;
-            padding:9px 10px;
-            font-size:13px;
-            line-height:1.35;
-            white-space:normal !important;
-            overflow-wrap:anywhere;
-            border-bottom:1px solid #eceef3;
-          }
-
-          .income-table td::before {
-            content:"";
-            flex:0 0 auto;
-            color:#7c8290;
-            font-size:11px;
-            font-weight:700;
-            margin-left:7px;
-          }
-
-          .income-table td:nth-child(1)::before { content:"תאריך"; }
-          .income-table td:nth-child(2)::before { content:"תיאור"; }
-          .income-table td:nth-child(3)::before { content:"קטגוריה"; }
-          .income-table td:nth-child(4)::before { content:"סוג"; }
-          .income-table td:nth-child(5)::before { content:"מצופה"; }
-          .income-table td:nth-child(6)::before { content:"בפועל"; }
-          .income-table td:nth-child(7)::before { content:"מי"; }
-          .income-table td:nth-child(8)::before { content:"פעולות"; }
-
-          /* התיאור והפעולות מקבלים שורה מלאה */
-          .income-table td:nth-child(2),
-          .income-table td:nth-child(8) {
-            grid-column:1 / -1;
-          }
-
-          .income-table td:nth-child(2) {
-            display:block;
-          }
-
-          .income-table td:nth-child(2)::before {
-            display:block;
-            margin:0 0 3px;
-          }
-
-          .income-table td:nth-child(8) {
-            align-items:center;
-            justify-content:flex-start;
-            gap:8px;
-            border-bottom:0;
-            background:#fafbfe;
-          }
-
-          .income-table td:nth-child(8)::before {
-            margin-left:8px;
-          }
-
-          .income-table td:nth-child(1),
-          .income-table td:nth-child(3),
-          .income-table td:nth-child(4),
-          .income-table td:nth-child(5),
-          .income-table td:nth-child(6),
-          .income-table td:nth-child(7) {
-            min-height:42px;
-          }
-
-          .income-table .table-actions {
-            display:flex;
-            gap:7px;
-            justify-content:flex-start;
-          }
-
-          .income-table .icon {
-            width:34px;
-            height:34px;
-            flex:0 0 34px;
-          }
-
-          .income-table th:last-child,
-          .income-table td:last-child {
-            position:static;
-            left:auto;
-            z-index:auto;
-            box-shadow:none;
-          }
-
-          .cards, .two-columns, .fixed-summary, .form-grid {
-            grid-template-columns:1fr;
-          }
-
+          .income-table th, .income-table td { padding:9px 6px; font-size:13px; }
+          .income-table th:nth-child(2), .income-table td:nth-child(2) { min-width:135px; }
+          .income-table .icon { width:30px; height:30px; }
+          .cards, .two-columns, .fixed-summary, .form-grid { grid-template-columns:1fr; }
           .topbar { align-items:flex-start; }
           .page-title { align-items:flex-start; }
           .fixed-card { align-items:flex-start; flex-direction:column; }
           .amounts { width:100%; justify-content:space-between; }
           .chart-row { grid-template-columns:90px 1fr 70px; font-size:12px; }
+        }
+      
+        .housing-summary { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-bottom:16px; }
+        .housing-note { padding:12px 14px; border-radius:12px; background:var(--surface-2, #f6f7f8); margin-bottom:16px; font-size:14px; }
+        .housing-table-wrap { overflow-x:auto; border:1px solid var(--border, #e5e7eb); border-radius:14px; }
+        .housing-table { width:100%; min-width:980px; border-collapse:collapse; }
+        .housing-table th, .housing-table td { padding:12px 10px; text-align:right; border-bottom:1px solid var(--border, #e5e7eb); vertical-align:top; white-space:nowrap; }
+        .housing-table th { background:var(--surface-2, #f6f7f8); font-size:13px; }
+        .housing-table td strong, .housing-table td small { display:block; }
+        .housing-table td small { margin-top:3px; opacity:.65; font-size:12px; white-space:normal; }
+        .housing-table tbody tr:last-child td { border-bottom:0; }
+        @media (max-width:700px) {
+          .housing-summary { grid-template-columns:1fr; }
+          .housing-panel .panel-head { align-items:flex-start; }
         }
       `}</style>
     </main>
