@@ -160,7 +160,9 @@ export default function BudgetApp() {
       const householdId = hr.household_id;
       setHousehold({ id: householdId, name: hr.household_name });
 
-      const [m, c, t, r] = await Promise.all([
+      const previousMonth = shiftMonth(month, -1);
+
+      const [m, c, t, previousFixedIncomeQuery, r] = await Promise.all([
         supabase.rpc("get_my_household_members"),
         supabase
           .from("categories")
@@ -176,6 +178,16 @@ export default function BudgetApp() {
           .order("transaction_date", { ascending: false })
           .order("created_at", { ascending: false }),
         supabase
+          .from("transactions")
+          .select("*")
+          .eq("household_id", householdId)
+          .eq("kind", "income")
+          .eq("expense_type", "fixed")
+          .gte("transaction_date", `${previousMonth}-01`)
+          .lt("transaction_date", `${month}-01`)
+          .order("transaction_date", { ascending: false })
+          .order("created_at", { ascending: false }),
+        supabase
           .from("recurring_expenses")
           .select("*")
           .eq("household_id", householdId)
@@ -187,6 +199,9 @@ export default function BudgetApp() {
       if (m.error) console.error(m.error);
       if (c.error) console.error(c.error);
       if (t.error) console.error(t.error);
+      if (previousFixedIncomeQuery.error) {
+        console.error(previousFixedIncomeQuery.error);
+      }
       if (r.error) console.error(r.error);
 
       setProfiles(
@@ -206,7 +221,14 @@ export default function BudgetApp() {
         r.data || []
       );
 
-      setTransactions(synced.transactions);
+      const syncedFixedIncomes = await syncFixedIncomeTransactions(
+        householdId,
+        synced.transactions,
+        previousFixedIncomeQuery.data || [],
+        month
+      );
+
+      setTransactions(syncedFixedIncomes);
       setRecurring(synced.recurring);
     } catch (e) {
       console.error(e);
@@ -292,6 +314,95 @@ export default function BudgetApp() {
     }
 
     return { transactions: patchedTransactions, recurring: nextRecurring };
+  }
+
+  async function syncFixedIncomeTransactions(
+    householdId,
+    currentRows,
+    previousMonthFixedIncomes,
+    currentMonth
+  ) {
+    const rows = [...(currentRows || [])];
+    const previous = previousMonthFixedIncomes || [];
+
+    if (!previous.length) {
+      return rows;
+    }
+
+    // אותה הכנסה מזוהה לפי מקור ההכנסה + על שם מי + קטגוריה.
+    // אם כבר קיימת הכנסה כזו בחודש הנוכחי, לא נוצרת כפילות.
+    const keyOf = (t) =>
+      [
+        String(t.description || "").trim().toLowerCase(),
+        String(t.person_user_id || ""),
+        String(t.category_id || ""),
+      ].join("|");
+
+    const currentFixed = rows.filter(
+      (t) => t.kind === "income" && t.expense_type === "fixed"
+    );
+
+    const currentKeys = new Set(currentFixed.map(keyOf));
+
+    for (const source of previous) {
+      const key = keyOf(source);
+
+      if (!key || currentKeys.has(key)) continue;
+
+      const sourceDate = new Date(`${source.transaction_date}T00:00:00`);
+      const sourceDay = Number.isNaN(sourceDate.getTime())
+        ? 1
+        : sourceDate.getDate();
+
+      // יום 29–31 יכול שלא להתקיים בחודש הבא, לכן מגבילים ל־28.
+      const day = Math.min(Math.max(sourceDay, 1), 28);
+      const transactionDate = `${currentMonth}-${String(day).padStart(2, "0")}`;
+
+      const row = {
+        household_id: householdId,
+        created_by: user?.id || null,
+        kind: "income",
+        description: String(source.description || "").trim(),
+        category_id: source.category_id || null,
+        transaction_date: transactionDate,
+        planned_amount: Number(
+          source.planned_amount ?? source.actual_amount ?? 0
+        ),
+        completed: false,
+        actual_amount: null,
+        expense_type: "fixed",
+        person_user_id: source.person_user_id || null,
+        note: source.note
+          ? `${source.note} · נוצר אוטומטית מהכנסה קבועה`
+          : "נוצר אוטומטית מהכנסה קבועה",
+        payment_method: source.payment_method || null,
+        merchant: source.merchant || null,
+        credit_card_last4: source.credit_card_last4 || null,
+        credit_card_provider: source.credit_card_provider || null,
+      };
+
+      const { data: inserted, error: insertError } = await supabase
+        .from("transactions")
+        .insert(row)
+        .select("*")
+        .single();
+
+      if (insertError) {
+        console.error("syncFixedIncomeTransactions:", insertError);
+        continue;
+      }
+
+      if (inserted) {
+        rows.push(inserted);
+        currentKeys.add(key);
+      }
+    }
+
+    return rows.sort((a, b) =>
+      String(b.transaction_date || "").localeCompare(
+        String(a.transaction_date || "")
+      )
+    );
   }
 
   async function signIn(e) {
