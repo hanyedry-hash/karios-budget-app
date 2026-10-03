@@ -95,6 +95,7 @@ export default function BudgetApp() {
   const [newCategory, setNewCategory] = useState("");
   const [confirm, setConfirm] = useState(null);
   const [housingCommitments, setHousingCommitments] = useState([]);
+  const [housingError, setHousingError] = useState("");
 
   const [expenseFilters, setExpenseFilters] = useState({
     fromDate: "",
@@ -143,6 +144,7 @@ export default function BudgetApp() {
       setTransactions([]);
       setRecurring([]);
       setHousingCommitments([]);
+      setHousingError("");
     }
   }, [user, month]);
 
@@ -196,7 +198,7 @@ export default function BudgetApp() {
           .eq("is_active", true)
           .order("day_of_month")
           .order("name"),
-        supabase
+              supabase
           .from("housing_commitments")
           .select("*")
           .eq("household_id", householdId)
@@ -209,8 +211,17 @@ export default function BudgetApp() {
       if (t.error) console.error(t.error);
       if (previousFixedIncomeQuery.error) console.error(previousFixedIncomeQuery.error);
       if (r.error) console.error(r.error);
-      if (housingQuery.error) console.error(housingQuery.error);
-      setHousingCommitments(housingQuery.data || []);
+      if (housingQuery.error) {
+        console.error("housing_commitments:", housingQuery.error);
+        setHousingCommitments([]);
+        setHousingError(
+          housingQuery.error.message ||
+            "לא הצלחתי לטעון את נתוני הדיור. בדקי הרשאת SELECT בטבלת housing_commitments."
+        );
+      } else {
+        setHousingError("");
+        setHousingCommitments(housingQuery.data || []);
+      }
 
       setProfiles(
         (m.data || []).map((x) => ({
@@ -1435,61 +1446,42 @@ export default function BudgetApp() {
           <div className="panel-head">
             <div>
               <h2>🏠 דיור והתחייבויות</h2>
-              <p>נתוני המשכנתאות כפי שנשמרו ב-Supabase.</p>
+              <p>נתוני המשכנתאות נשמרים בנפרד מתקציב ההוצאות.</p>
             </div>
             <button className="ghost" onClick={refresh}>רענון</button>
           </div>
 
           <div className="housing-summary">
-            <Stat
-              title="יתרת משכנתאות"
-              value={money(housingBalanceTotal)}
-            />
-            <Stat
-              title="תשלום חודשי לפי רכיבים"
-              value={money(housingPaymentTotal)}
-            />
-            <Stat
-              title="מספר התחייבויות"
-              value={String(housingCommitments.length)}
-            />
+            <Stat title="יתרת משכנתאות" value={money(housingBalanceTotal)} />
+            <Stat title="תשלום חודשי" value={money(housingPaymentTotal)} />
+            <Stat title="מספר התחייבויות" value={String(housingCommitments.length)} />
           </div>
 
           <div className="housing-note">
-            <strong>שים לב:</strong> התשלום החודשי המוצג בטבלה הוא הנתון שנשמר לכל הלוואה במסמך המקור.
+            <strong>חשוב:</strong> הנתונים כאן אינם יוצרים תנועת הוצאה ואינם משנים את התקציב החודשי.
           </div>
+
+          {housingError && <div className="error">{housingError}</div>}
 
           {housingCommitments.length ? (
             <div className="housing-table-wrap">
               <table className="housing-table">
                 <thead>
                   <tr>
-                    <th>הלוואה</th>
-                    <th>יתרה</th>
-                    <th>תשלום חודשי</th>
-                    <th>ריבית</th>
-                    <th>סוג</th>
-                    <th>הצמדה</th>
-                    <th>סיום</th>
-                    <th>שינוי ריבית</th>
+                    <th>הלוואה</th><th>יתרה</th><th>תשלום חודשי</th>
+                    <th>ריבית</th><th>סוג</th><th>הצמדה</th>
+                    <th>סיום</th><th>שינוי ריבית</th><th>נכון ל־</th>
                   </tr>
                 </thead>
                 <tbody>
                   {housingCommitments.map((h) => (
                     <tr key={h.id}>
-                      <td>
-                        <strong>{h.name}</strong>
-                        <small>{h.loan_number}</small>
-                      </td>
+                      <td><strong>{h.name}</strong><small>{h.loan_number || "—"}</small></td>
                       <td>{money(h.current_balance)}</td>
                       <td>{money(h.current_payment)}</td>
                       <td>
-                        {h.interest_rate != null
-                          ? `${Number(h.interest_rate).toFixed(3)}%`
-                          : "—"}
-                        {h.rate_formula ? (
-                          <small>{h.rate_formula}</small>
-                        ) : null}
+                        {h.interest_rate != null ? `${Number(h.interest_rate).toFixed(3)}%` : "—"}
+                        {h.rate_formula ? <small>{h.rate_formula}</small> : null}
                       </td>
                       <td>{h.rate_type || "—"}</td>
                       <td>{h.indexation || "—"}</td>
@@ -1499,13 +1491,14 @@ export default function BudgetApp() {
                           ? `${dateText(h.next_rate_change)}${h.rate_change_months ? ` · כל ${h.rate_change_months} ח׳` : ""}`
                           : "—"}
                       </td>
+                      <td>{dateText(h.as_of_date)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           ) : (
-            <Empty text="לא נמצאו התחייבויות דיור." />
+            <Empty text={housingError ? "לא ניתן להציג את הנתונים כרגע." : "לא נמצאו התחייבויות דיור."} />
           )}
         </section>
       )}
@@ -2155,6 +2148,14 @@ export default function BudgetApp() {
         .login-page, .loading-page { min-height:100vh; display:grid; place-items:center; padding:20px; }
         .login-card { width:min(390px,100%); background:#fff; padding:28px; border-radius:18px; border:1px solid #e1e3eb; display:grid; gap:13px; }
         .logo-circle { width:55px; height:55px; border-radius:50%; display:grid; place-items:center; background:#6973db; color:#fff; font-size:24px; margin:auto; }
+        .housing-summary { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:16px; }
+        .housing-note { padding:12px 14px; border-radius:12px; background:#f6f7f8; margin-bottom:16px; font-size:14px; }
+        .housing-table-wrap { overflow-x:auto; border:1px solid #e3e5ed; border-radius:12px; }
+        .housing-table { width:100%; min-width:1080px; border-collapse:collapse; }
+        .housing-table th, .housing-table td { padding:12px 10px; text-align:right; border-bottom:1px solid #eceef3; vertical-align:top; white-space:nowrap; }
+        .housing-table th { background:#f7f8fb; font-size:13px; }
+        .housing-table td strong, .housing-table td small { display:block; }
+        .housing-table td small { margin-top:3px; color:#7c8290; font-size:12px; white-space:normal; }
         @media(max-width:800px) {
           .cards, .two-columns { grid-template-columns:1fr 1fr; }
           .chart-row { grid-template-columns:100px 1fr 75px; }
@@ -2170,20 +2171,6 @@ export default function BudgetApp() {
           .fixed-card { align-items:flex-start; flex-direction:column; }
           .amounts { width:100%; justify-content:space-between; }
           .chart-row { grid-template-columns:90px 1fr 70px; font-size:12px; }
-        }
-      
-        .housing-summary { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:12px; margin-bottom:16px; }
-        .housing-note { padding:12px 14px; border-radius:12px; background:var(--surface-2, #f6f7f8); margin-bottom:16px; font-size:14px; }
-        .housing-table-wrap { overflow-x:auto; border:1px solid var(--border, #e5e7eb); border-radius:14px; }
-        .housing-table { width:100%; min-width:980px; border-collapse:collapse; }
-        .housing-table th, .housing-table td { padding:12px 10px; text-align:right; border-bottom:1px solid var(--border, #e5e7eb); vertical-align:top; white-space:nowrap; }
-        .housing-table th { background:var(--surface-2, #f6f7f8); font-size:13px; }
-        .housing-table td strong, .housing-table td small { display:block; }
-        .housing-table td small { margin-top:3px; opacity:.65; font-size:12px; white-space:normal; }
-        .housing-table tbody tr:last-child td { border-bottom:0; }
-        @media (max-width:700px) {
-          .housing-summary { grid-template-columns:1fr; }
-          .housing-panel .panel-head { align-items:flex-start; }
         }
       `}</style>
     </main>
