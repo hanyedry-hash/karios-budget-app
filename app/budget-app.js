@@ -1827,107 +1827,93 @@ function HousingForecastView({
     return result;
   }, [balanceTarget, balanceForecast, forecastStart]);
 
+  const selectedTooltip = hoveredPoint || null;
+
   const graph = useMemo(() => {
-    const rows = forecast.byMonth || [];
-    if (!rows.length) return { width: 900, height: 290, pad: { left: 58, right: 18, top: 28, bottom: 48 }, plotW: 824, plotH: 214, max: 1, min: 0, points: [] };
+    // גרף הסיכום מבוסס אך ורק על המצב הקיים:
+    // התשלום הנוכחי נשאר קבוע, והדבר היחיד שמשנה אותו הוא תאריך הסיום
+    // של התחייבות. אין שימוש בשינויי ריבית, תרחישים או תחזית עתידית.
+    const today = new Date();
+    const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const todayKeyValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const todayMonthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
-    // הגרף מציג רק שינויים שאפשר לדעת בוודאות מהנתונים הקיימים:
-    // היום + סיום התחייבות, שאחריו התשלום החודשי שלה יורד לאפס.
-    // שינוי ריבית עתידי ללא ריבית עתידית ידועה אינו מוריד את ההחזר לאפס
-    // ואינו מוכנס לגרף המספרי. הוא נשאר ברשימת "השינויים הצפויים".
-    const startMonth = todayMonth;
-    const startDate = new Date(`${startMonth}-01T00:00:00`);
-    const now = new Date();
-    const todayPointDate = now.getFullYear() === Number(startMonth.slice(0, 4)) && now.getMonth() + 1 === Number(startMonth.slice(5, 7))
-      ? now
-      : startDate;
+    const activeCommitments = (commitments || [])
+      .map((c) => ({
+        ...c,
+        endDate: c?.end_date ? new Date(`${String(c.end_date).slice(0, 10)}T00:00:00`) : null,
+        payment: commitmentPayment(c),
+      }))
+      .filter((c) => c.endDate && !Number.isNaN(c.endDate.getTime()) && c.endDate >= todayDate);
 
-    const endCandidates = (commitments || [])
-      .map((c) => normalizeDateMonth(c.end_date))
-      .filter(Boolean)
-      .sort();
-    const latestEndMonth = endCandidates[endCandidates.length - 1] || shiftMonth(startMonth, forecastMonths - 1);
-    const requestedEndMonth = shiftMonth(startMonth, Math.max(Number(forecastMonths || 1) - 1, 0));
-    const graphEndMonth = latestEndMonth > requestedEndMonth ? latestEndMonth : requestedEndMonth;
-    const endDate = new Date(`${graphEndMonth}-28T00:00:00`);
-    endDate.setMonth(endDate.getMonth() + 1, 0);
+    const endDates = [...new Set(activeCommitments.map((c) => String(c.end_date).slice(0, 10)))]
+      .sort((a, b) => a.localeCompare(b));
 
     const points = [{
-      month: startMonth,
-      date: todayKey(todayPointDate),
+      id: "today",
+      date: todayKeyValue,
+      month: todayMonthKey,
       payment: Number(state.totalPayment || 0),
       graphType: "today",
-      cp: null,
+      commitments: [],
     }];
 
-    // כל התחייבות יוצרת נקודת שינוי בחודש שאחרי תאריך הסיום שלה.
-    // אם כמה התחייבויות מסתיימות באותו חודש, הן מאוחדות לנקודה אחת.
-    const endEvents = new Map();
-    (commitments || []).forEach((c) => {
-      const endMonth = normalizeDateMonth(c.end_date);
-      if (!endMonth || endMonth < startMonth) return;
-      const changeMonth = shiftMonth(endMonth, 1);
-      const changeDate = `${changeMonth}-01`;
-      if (changeMonth > graphEndMonth) return;
-      const existing = endEvents.get(changeDate) || {
-        id: `graph-${changeDate}`,
-        month: changeMonth,
-        date: changeDate,
-        beforePayment: null,
-        afterPayment: null,
-        delta: 0,
-        knownAfter: true,
-        commitments: [],
-        reason: "התחייבות הסתיימה",
-      };
-      const payment = commitmentPayment(c);
-      existing.beforePayment = Number(existing.beforePayment || 0) + payment;
-      existing.afterPayment = null;
-      existing.delta = Number(existing.delta || 0) - payment;
-      existing.commitments.push({
-        id: c.id,
-        name: c.name,
-        type: commitmentTypeValue(c),
-        payment,
-        paymentKnown: true,
-        reason: "התחייבות הסתיימה",
-      });
-      endEvents.set(changeDate, existing);
-    });
-
-    // Build the actual step values from today's payment minus payments that
-    // have already ended. This deliberately avoids treating an unknown future
-    // rate as zero.
-    const orderedEvents = [...endEvents.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    let runningPayment = Number(state.totalPayment || 0);
-    orderedEvents.forEach((event) => {
-      const endedPayment = event.commitments.reduce((sum, x) => sum + Number(x.payment || 0), 0);
-      event.beforePayment = runningPayment;
-      runningPayment = Math.max(0, runningPayment - endedPayment);
-      event.afterPayment = runningPayment;
-      event.delta = runningPayment - event.beforePayment;
-      event.knownAfter = true;
+    // בכל תאריך סיום מורידים מההחזר הנוכחי את ההחזרים של כל ההתחייבויות
+    // שהסתיימו עד אותו תאריך. כך כל נקודה מייצגת מצב קיים בלבד.
+    endDates.forEach((date) => {
+      const ended = activeCommitments.filter((c) => String(c.end_date).slice(0, 10) <= date);
+      const endedPayment = ended.reduce((sum, c) => sum + Number(c.payment || 0), 0);
+      const payment = Math.max(0, Number(state.totalPayment || 0) - endedPayment);
+      const dateCommitments = activeCommitments.filter((c) => String(c.end_date).slice(0, 10) === date);
+      const beforePayment = points[points.length - 1]?.payment ?? Number(state.totalPayment || 0);
       points.push({
-        month: event.month,
-        date: event.date,
-        payment: runningPayment,
-        graphType: "change",
-        changePoint: event,
+        id: `end-${date}`,
+        date,
+        month: date.slice(0, 7),
+        payment,
+        beforePayment,
+        afterPayment: payment,
+        delta: payment - beforePayment,
+        knownAfter: true,
+        graphType: "end",
+        reason: "התחייבות הסתיימה",
+        commitments: dateCommitments.map((c) => ({
+          id: c.id,
+          name: c.name,
+          type: commitmentTypeValue(c),
+          payment: c.payment,
+          reason: "תאריך סיום התחייבות",
+        })),
       });
     });
 
-    const unique = [...new Map(points.map((p) => [p.date, p])).values()]
+    // אם יש התחייבות שמסתיימת היום, הנקודה של היום כבר מייצגת את המצב הנוכחי
+    // ולכן אין צורך להציג אותה פעמיים.
+    const uniquePoints = [...new Map(points.map((point) => [point.date, point])).values()]
       .sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    const knownValues = unique.map((p) => Number(p.payment)).filter(Number.isFinite);
-    const max = Math.max(...knownValues, Number(state.totalPayment || 0), 1);
-    const min = 0;
+
+    const max = Math.max(...uniquePoints.map((p) => Number(p.payment || 0)), Number(state.totalPayment || 0), 1);
+    const min = Math.min(...uniquePoints.map((p) => Number(p.payment || 0)), 0);
     const span = Math.max(max - min, 1);
-    const width = 900, height = 290, pad = { left: 58, right: 18, top: 28, bottom: 48 };
-    const plotW = width - pad.left - pad.right, plotH = height - pad.top - pad.bottom;
-    const graphRight = width - pad.right;
-    const totalMs = Math.max(endDate.getTime() - todayPointDate.getTime(), 1);
-    const x = (date) => graphRight - ((new Date(`${date}T00:00:00`).getTime() - todayPointDate.getTime()) / totalMs) * plotW;
-    const y = (v) => pad.top + ((max - Number(v)) / span) * plotH;
+    const width = 900;
+    const height = 290;
+    const pad = { left: 58, right: 18, top: 28, bottom: 48 };
+    const plotW = width - pad.left - pad.right;
+    const plotH = height - pad.top - pad.bottom;
+    const firstDate = todayDate.getTime();
+    const lastDate = Math.max(
+      firstDate + 1,
+      ...uniquePoints.map((p) => new Date(`${p.date}T00:00:00`).getTime())
+    );
+    const totalMs = Math.max(lastDate - firstDate, 1);
+
+    // העתיד מתקדם מימין לשמאל, בדיוק כמו בהדמיה.
+    const x = (date) => {
+      const ms = new Date(`${date}T00:00:00`).getTime();
+      const progress = Math.max(0, Math.min(1, (ms - firstDate) / totalMs));
+      return width - pad.right - progress * plotW;
+    };
+    const y = (value) => pad.top + ((max - Number(value || 0)) / span) * plotH;
 
     return {
       width,
@@ -1939,38 +1925,14 @@ function HousingForecastView({
       min,
       x,
       y,
-      points: unique.map((point) => ({ ...point, x: x(point.date), y: y(point.payment), cp: point.changePoint || null })),
+      points: uniquePoints.map((point) => ({
+        ...point,
+        x: x(point.date),
+        y: y(point.payment),
+        cp: point.graphType === "end" ? point : null,
+      })),
     };
-  }, [commitments, forecast, state.totalPayment, todayMonth, forecastMonths]);
-
-  const selectedTooltip = hoveredPoint || (selectedChange ? changePoints.find((x) => x.id === selectedChange) : null);
-  const fmtDelta = (d) => d == null ? "לא ניתן לחישוב" : `${d > 0 ? "+" : ""}${money(d)}`;
-  function updateScenario(id, key, value) {
-    setScenarios((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
-  }
-
-  const renderCommitmentCards = (type) => {
-    const list = sortCommitmentsByEndDate(grouped[type] || []);
-    if (!list.length) return <div className="housing-empty">אין כרגע {commitmentTypePlural(type)} בנתונים הקיימים.</div>;
-    return <div className="housing-commitment-list">{list.map((c) => (
-      <div key={c.id} className="housing-commitment-card">
-        <div className="housing-commitment-card-top"><div><strong>{c.name || "ללא שם"}</strong><span className="housing-type-badge">{commitmentTypeLabel(c)}</span></div><strong>{money(commitmentPayment(c))}</strong></div>
-        <div className="housing-commitment-card-meta">יתרה {money(commitmentBalance(c))} · ריבית {c.interest_rate != null ? `${Number(c.interest_rate).toFixed(3)}%` : "לא ידועה"} · סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
-      </div>
-    ))}</div>;
-  };
-
-  const renderScenarioCards = (list) => <div className="loan-card-list">{sortCommitmentsByEndDate(list).map((loan) => {
-    const scenario = scenarios[loan.id] || {};
-    return <div key={loan.id} className={`loan-card ${selectedLoan === loan.id ? "selected" : ""}`} onClick={() => setSelectedLoan(loan.id)}>
-      <div className="loan-card-top"><strong>{loan.name}</strong><strong>{money(loan.current_balance)}</strong></div>
-      <div className="loan-card-meta">{commitmentTypeLabel(loan)} · תשלום נוכחי {money(loan.current_payment)} · שינוי ריבית {loan.next_rate_change ? dateText(loan.next_rate_change) : "לא מוגדר"}</div>
-      {selectedLoan === loan.id && <div className="scenario-grid" style={{marginTop:12}} onClick={(e) => e.stopPropagation()}>
-        <label>ריבית אחרי שינוי<input type="number" min="0" max="30" step="0.01" value={scenario.rate ?? ""} onChange={(e) => updateScenario(loan.id,"rate",e.target.value)} placeholder={loan.interest_rate != null ? String(loan.interest_rate) : "לדוגמה 4.25"} /></label>
-        <label>או תשלום חודשי<input type="number" min="0" step="1" value={scenario.payment ?? ""} onChange={(e) => updateScenario(loan.id,"payment",e.target.value)} placeholder="אופציונלי" /></label>
-      </div>}
-    </div>;
-  })}</div>;
+  }, [commitments, state.totalPayment]);
 
   return (
     <section className="panel housing-panel">
@@ -2010,40 +1972,28 @@ function HousingForecastView({
       {housingSubTab === 'summary' && <>
         <section className="housing-section-card housing-forecast-card">
           <div className="housing-section-head">
-            <div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל · מוצגות רק נקודות שינוי משמעותיות</p></div>
-            <div className="forecast-current-badge"><span>היום</span><strong>{money(state.totalPayment)}</strong></div>
+            <div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל</p></div>
           </div>
-          <div className="forecast-controls compact housing-forecast-controls">
-            <label>מתחיל מ־<input type="month" value={forecastStart} onChange={(e) => setForecastStart(e.target.value)} /></label>
-            <label>טווח<select value={forecastMonths} onChange={(e) => setForecastMonths(Number(e.target.value))}><option value={24}>24 חודשים</option><option value={36}>3 שנים</option><option value={60}>5 שנים</option><option value={120}>10 שנים</option><option value={240}>20 שנים</option><option value={360}>30 שנים</option></select></label>
-          </div>
-          <div className="forecast-type-legend"><span><i className="legend-dot mortgage"></i>משכנתאות {money(state.mortgagePayment)}</span><span><i className="legend-dot loan"></i>הלוואות {money(state.loanPayment)}</span>{state.otherPayment > 0 && <span><i className="legend-dot other"></i>אחרות {money(state.otherPayment)}</span>}</div>
           {selectedTooltip && <div className="housing-chart-tooltip"><div><strong>{monthLabel(selectedTooltip.month)}</strong></div><div>לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong> · אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong> · שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>{selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}<div className="muted">{selectedTooltip.reason || "סיבה לא ידועה"}</div></div>}
           <div className="housing-chart-wrap"><svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
             {graph.points.length > 1 && graph.points.slice(0, -1).map((point, idx) => {
               const next = graph.points[idx + 1];
-              const jump = Number(point.payment) !== Number(next.payment) || Boolean(next.cp);
-              return <g key={`segment-${point.date}`}>
-                <line className="housing-chart-line" x1={point.x} y1={point.y} x2={next.x} y2={point.y} />
-                {jump && <line className="housing-chart-line" x1={next.x} y1={point.y} x2={next.x} y2={next.y} />}
-              </g>;
+              return <line key={`segment-${point.date}`} className="housing-chart-line" x1={point.x} y1={point.y} x2={next.x} y2={next.y} />;
             })}
             {graph.points.map((point, idx) => {
               const cp = point.cp;
               const isToday = idx === 0;
-              const isUnknown = point.graphType === "unknown";
-              return <g key={point.month}>
-                {cp && <line className="housing-chart-unknown" x1={point.x} x2={point.x} y1={graph.pad.top} y2={graph.height-graph.pad.bottom}/>}
-                <circle className={`housing-chart-point ${isToday ? "today" : "change"} ${isUnknown ? "unknown" : ""}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6}
+              return <g key={point.date}>
+                <circle className={`housing-chart-point ${isToday ? "today" : "change"}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6}
                   onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)}
                   onClick={() => cp && setSelectedChange(cp.id)} />
-                <text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : dateText(point.date)}</text>
+                <text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : new Date(`${point.date}T00:00:00`).getFullYear()}</text>
               </g>;
             })}
           </svg></div>
-          <div className="housing-legend">כל נקודה בגרף מייצגת את היום או תאריך שבו ההחזר החודשי משתנה. הקו מתקדם מימין לשמאל; קו מקווקו מסמן שינוי שהסכום החדש שלו אינו ניתן לחישוב מהנתונים הקיימים.</div>
+          <div className="housing-legend">כל נקודה בגרף מייצגת את היום או תאריך סיום של התחייבות. החישוב מבוסס על המצב הקיים בלבד: בכל תאריך סיום יורד ההחזר החודשי של ההתחייבות שהסתיימה. הזמן מתקדם מימין לשמאל.</div>
         </section>
 
         <section className="housing-section-card"><div className="housing-section-head"><div><h3>📅 השינויים הצפויים בהחזר</h3><p>רשימה כרונולוגית של נקודות שבהן התשלום משתנה או צפוי להשתנות.</p></div></div>{changePoints.length ? <div className="housing-changes">{changePoints.map((cp) => <div key={cp.id} className={`housing-change-card ${selectedChange === cp.id ? "selected" : ""}`} onClick={() => setSelectedChange(cp.id)}><div className="housing-change-top"><div className="housing-change-date">{dateText(`${cp.month}-01`)}</div><div className={`housing-change-delta ${cp.delta != null && cp.delta < 0 ? "down" : cp.delta > 0 ? "up" : ""}`}>{fmtDelta(cp.delta)}</div></div><div className="housing-change-grid"><div><span>לפני</span><strong>{cp.beforePayment == null ? "לא ידוע" : money(cp.beforePayment)}</strong></div><div><span>אחרי</span><strong>{cp.knownAfter ? money(cp.afterPayment) : "לא ניתן לחישוב"}</strong></div><div><span>סטטוס</span><strong>{cp.knownAfter ? "מחושב" : "צפוי שינוי"}</strong></div></div><div className="housing-change-reason">{cp.reason || "סיבה לא ידועה"}</div>{cp.commitments?.length > 0 && <div className="housing-change-commitments">{cp.commitments.map((x) => <span className="housing-change-chip" key={x.id}>{x.name}</span>)}</div>}</div>)}</div> : <div className="housing-empty">לא זוהו כרגע נקודות שינוי בטווח התחזית.</div>}</section>
