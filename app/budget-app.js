@@ -141,6 +141,13 @@ const commitmentTypeValue = (c) => {
 };
 const commitmentTypeLabel = (c) => ({ mortgage: "משכנתא", loan: "הלוואה", other: "התחייבות נוספת" }[commitmentTypeValue(c)] || "התחייבות נוספת");
 
+const fmtDelta = (value) => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "לא ניתן לחישוב";
+  const n = Number(value);
+  if (Math.abs(n) < 0.5) return "ללא שינוי";
+  return `${n > 0 ? "+" : ""}${money(n)}`;
+};
+
 // נתוני דיור שהוזנו ידנית מתוך המסמכים שסופקו.
 // המקור הוא מסמך המשכנתאות של בנק הפועלים מיום 03/10/2026
 // וצילום מסך של שתי ההלוואות מיום 01/10/2026.
