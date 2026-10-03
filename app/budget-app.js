@@ -683,7 +683,7 @@ export default function BudgetApp() {
 
   const [housingCommitments, setHousingCommitments] = useState([]);
   const [housingError, setHousingError] = useState("");
-  const [forecastMonths, setForecastMonths] = useState(36);
+  const [forecastMonths, setForecastMonths] = useState(360);
   const [forecastStart, setForecastStart] = useState(monthKey());
   const [housingScenarios, setHousingScenarios] = useState({});
   const [selectedHousingLoan, setSelectedHousingLoan] = useState("");
@@ -1829,35 +1829,90 @@ function HousingForecastView({
 
   const graph = useMemo(() => {
     const rows = forecast.byMonth || [];
-    const first = rows.find((r) => r.month === todayMonth) || rows[0];
-    if (!first) return { rows, width: 900, height: 290, pad: { left: 58, right: 18, top: 28, bottom: 48 }, plotW: 824, plotH: 214, max: 1, min: 0, points: [] };
+    if (!rows.length) return { width: 900, height: 290, pad: { left: 58, right: 18, top: 28, bottom: 48 }, plotW: 824, plotH: 214, max: 1, min: 0, points: [] };
 
-    const startDate = new Date(`${todayMonth}-01T00:00:00`);
+    // הגרף מציג רק שינויים שאפשר לדעת בוודאות מהנתונים הקיימים:
+    // היום + סיום התחייבות, שאחריו התשלום החודשי שלה יורד לאפס.
+    // שינוי ריבית עתידי ללא ריבית עתידית ידועה אינו מוריד את ההחזר לאפס
+    // ואינו מוכנס לגרף המספרי. הוא נשאר ברשימת "השינויים הצפויים".
+    const startMonth = todayMonth;
+    const startDate = new Date(`${startMonth}-01T00:00:00`);
     const now = new Date();
-    const todayPointDate = now.getFullYear() === Number(todayMonth.slice(0, 4)) && now.getMonth() + 1 === Number(todayMonth.slice(5, 7))
+    const todayPointDate = now.getFullYear() === Number(startMonth.slice(0, 4)) && now.getMonth() + 1 === Number(startMonth.slice(5, 7))
       ? now
       : startDate;
-    const lastRow = rows[rows.length - 1];
-    const endDate = new Date(`${lastRow.month}-28T00:00:00`);
+
+    const endCandidates = (commitments || [])
+      .map((c) => normalizeDateMonth(c.end_date))
+      .filter(Boolean)
+      .sort();
+    const latestEndMonth = endCandidates[endCandidates.length - 1] || shiftMonth(startMonth, forecastMonths - 1);
+    const requestedEndMonth = shiftMonth(startMonth, Math.max(Number(forecastMonths || 1) - 1, 0));
+    const graphEndMonth = latestEndMonth > requestedEndMonth ? latestEndMonth : requestedEndMonth;
+    const endDate = new Date(`${graphEndMonth}-28T00:00:00`);
     endDate.setMonth(endDate.getMonth() + 1, 0);
 
     const points = [{
-      month: first.month,
+      month: startMonth,
       date: todayKey(todayPointDate),
-      payment: Number(state.totalPayment || first.payment || 0),
+      payment: Number(state.totalPayment || 0),
       graphType: "today",
       cp: null,
     }];
 
-    changePoints.forEach((cp) => {
-      const row = rows.find((r) => r.month === cp.month);
-      if (!row) return;
+    // כל התחייבות יוצרת נקודת שינוי בחודש שאחרי תאריך הסיום שלה.
+    // אם כמה התחייבויות מסתיימות באותו חודש, הן מאוחדות לנקודה אחת.
+    const endEvents = new Map();
+    (commitments || []).forEach((c) => {
+      const endMonth = normalizeDateMonth(c.end_date);
+      if (!endMonth || endMonth < startMonth) return;
+      const changeMonth = shiftMonth(endMonth, 1);
+      const changeDate = `${changeMonth}-01`;
+      if (changeMonth > graphEndMonth) return;
+      const existing = endEvents.get(changeDate) || {
+        id: `graph-${changeDate}`,
+        month: changeMonth,
+        date: changeDate,
+        beforePayment: null,
+        afterPayment: null,
+        delta: 0,
+        knownAfter: true,
+        commitments: [],
+        reason: "התחייבות הסתיימה",
+      };
+      const payment = commitmentPayment(c);
+      existing.beforePayment = Number(existing.beforePayment || 0) + payment;
+      existing.afterPayment = null;
+      existing.delta = Number(existing.delta || 0) - payment;
+      existing.commitments.push({
+        id: c.id,
+        name: c.name,
+        type: commitmentTypeValue(c),
+        payment,
+        paymentKnown: true,
+        reason: "התחייבות הסתיימה",
+      });
+      endEvents.set(changeDate, existing);
+    });
+
+    // Build the actual step values from today's payment minus payments that
+    // have already ended. This deliberately avoids treating an unknown future
+    // rate as zero.
+    const orderedEvents = [...endEvents.values()].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    let runningPayment = Number(state.totalPayment || 0);
+    orderedEvents.forEach((event) => {
+      const endedPayment = event.commitments.reduce((sum, x) => sum + Number(x.payment || 0), 0);
+      event.beforePayment = runningPayment;
+      runningPayment = Math.max(0, runningPayment - endedPayment);
+      event.afterPayment = runningPayment;
+      event.delta = runningPayment - event.beforePayment;
+      event.knownAfter = true;
       points.push({
-        month: cp.month,
-        date: cp.date || `${cp.month}-01`,
-        payment: cp.knownAfter ? Number(cp.afterPayment || 0) : Number(cp.beforePayment || 0),
-        graphType: cp.knownAfter ? "change" : "unknown",
-        changePoint: cp,
+        month: event.month,
+        date: event.date,
+        payment: runningPayment,
+        graphType: "change",
+        changePoint: event,
       });
     });
 
@@ -1865,7 +1920,7 @@ function HousingForecastView({
       .sort((a, b) => String(a.date).localeCompare(String(b.date)));
     const knownValues = unique.map((p) => Number(p.payment)).filter(Number.isFinite);
     const max = Math.max(...knownValues, Number(state.totalPayment || 0), 1);
-    const min = Math.min(...knownValues, 0);
+    const min = 0;
     const span = Math.max(max - min, 1);
     const width = 900, height = 290, pad = { left: 58, right: 18, top: 28, bottom: 48 };
     const plotW = width - pad.left - pad.right, plotH = height - pad.top - pad.bottom;
@@ -1875,7 +1930,6 @@ function HousingForecastView({
     const y = (v) => pad.top + ((max - Number(v)) / span) * plotH;
 
     return {
-      rows,
       width,
       height,
       pad,
@@ -1887,7 +1941,7 @@ function HousingForecastView({
       y,
       points: unique.map((point) => ({ ...point, x: x(point.date), y: y(point.payment), cp: point.changePoint || null })),
     };
-  }, [forecast, changePoints, state.totalPayment, todayMonth]);
+  }, [commitments, forecast, state.totalPayment, todayMonth, forecastMonths]);
 
   const selectedTooltip = hoveredPoint || (selectedChange ? changePoints.find((x) => x.id === selectedChange) : null);
   const fmtDelta = (d) => d == null ? "לא ניתן לחישוב" : `${d > 0 ? "+" : ""}${money(d)}`;
