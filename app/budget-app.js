@@ -160,7 +160,9 @@ export default function BudgetApp() {
       const householdId = hr.household_id;
       setHousehold({ id: householdId, name: hr.household_name });
 
-      const [m, c, t, r] = await Promise.all([
+      const previousMonth = shiftMonth(month, -1);
+
+      const [m, c, t, previousFixedIncomeQuery, r] = await Promise.all([
         supabase.rpc("get_my_household_members"),
         supabase
           .from("categories")
@@ -176,6 +178,16 @@ export default function BudgetApp() {
           .order("transaction_date", { ascending: false })
           .order("created_at", { ascending: false }),
         supabase
+          .from("transactions")
+          .select("*")
+          .eq("household_id", householdId)
+          .eq("kind", "income")
+          .eq("expense_type", "fixed")
+          .gte("transaction_date", `${previousMonth}-01`)
+          .lt("transaction_date", `${month}-01`)
+          .order("transaction_date", { ascending: false })
+          .order("created_at", { ascending: false }),
+        supabase
           .from("recurring_expenses")
           .select("*")
           .eq("household_id", householdId)
@@ -187,6 +199,7 @@ export default function BudgetApp() {
       if (m.error) console.error(m.error);
       if (c.error) console.error(c.error);
       if (t.error) console.error(t.error);
+      if (previousFixedIncomeQuery.error) console.error(previousFixedIncomeQuery.error);
       if (r.error) console.error(r.error);
 
       setProfiles(
@@ -198,11 +211,21 @@ export default function BudgetApp() {
       );
       setCategories(c.data || []);
 
+      // הכנסה קבועה: אם קיימת הכנסה קבועה בחודש הקודם ואין לה מופע
+      // בחודש הנוכחי, יוצרים אוטומטית מופע חדש עם הסכום המצופה.
+      // הסכום בפועל נשאר ריק עד שההכנסה מתקבלת.
+      const incomeSyncedRows = await syncFixedIncomeTransactions(
+        householdId,
+        t.data || [],
+        previousFixedIncomeQuery.data || [],
+        month
+      );
+
       // הוצאות קבועות שיובאו מאשראי נשמרות גם כהוצאה קבועה (recurring_expenses),
       // כדי שיופיעו במסך "הוצאות קבועות" ולא רק בטבלת ההוצאות.
       const synced = await syncImportedFixedTransactions(
         householdId,
-        t.data || [],
+        incomeSyncedRows,
         r.data || []
       );
 
@@ -214,6 +237,87 @@ export default function BudgetApp() {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function syncFixedIncomeTransactions(
+    householdId,
+    currentRows,
+    previousMonthFixedIncomes,
+    currentMonth
+  ) {
+    const rows = [...(currentRows || [])];
+    const previous = previousMonthFixedIncomes || [];
+
+    if (!previous.length) return rows;
+
+    const keyOf = (t) =>
+      [
+        String(t.description || "").trim().toLowerCase(),
+        String(t.person_user_id || ""),
+        String(t.category_id || ""),
+      ].join("|");
+
+    const currentFixedKeys = new Set(
+      rows
+        .filter((t) => t.kind === "income" && t.expense_type === "fixed")
+        .map(keyOf)
+    );
+
+    for (const source of previous) {
+      const key = keyOf(source);
+      if (!key || currentFixedKeys.has(key)) continue;
+
+      const sourceDate = new Date(`${source.transaction_date}T00:00:00`);
+      const wantedDay = Number.isNaN(sourceDate.getTime())
+        ? 1
+        : sourceDate.getDate();
+      const [year, monthNumber] = currentMonth.split("-").map(Number);
+      const lastDay = new Date(year, monthNumber, 0).getDate();
+      const day = Math.min(Math.max(wantedDay, 1), lastDay);
+
+      const row = {
+        household_id: householdId,
+        created_by: user?.id || null,
+        kind: "income",
+        description: String(source.description || "").trim(),
+        category_id: source.category_id || null,
+        transaction_date: `${currentMonth}-${String(day).padStart(2, "0")}`,
+        planned_amount: Number(source.planned_amount ?? source.actual_amount ?? 0),
+        completed: false,
+        actual_amount: null,
+        expense_type: "fixed",
+        person_user_id: source.person_user_id || null,
+        note: source.note
+          ? `${source.note} · נוצר אוטומטית מהכנסה קבועה`
+          : "נוצר אוטומטית מהכנסה קבועה",
+        payment_method: source.payment_method || null,
+        merchant: source.merchant || null,
+        credit_card_last4: source.credit_card_last4 || null,
+        credit_card_provider: source.credit_card_provider || null,
+      };
+
+      const { data: inserted, error } = await supabase
+        .from("transactions")
+        .insert(row)
+        .select("*")
+        .single();
+
+      if (error) {
+        console.error("syncFixedIncomeTransactions:", error);
+        continue;
+      }
+
+      if (inserted) {
+        rows.push(inserted);
+        currentFixedKeys.add(key);
+      }
+    }
+
+    return rows.sort((a, b) =>
+      String(b.transaction_date || "").localeCompare(
+        String(a.transaction_date || "")
+      )
+    );
   }
 
   async function syncImportedFixedTransactions(householdId, txRows, recurringRows) {
