@@ -1785,11 +1785,11 @@ function HousingForecastView({
     // Useful future checkpoints are generated only when they are within the
     // forecast horizon or before the latest known commitment end date. They are
     // display checkpoints, not new financial data.
-    const latestKnownEnd = (commitments || [])
+    const latestKnownEnds = (commitments || [])
       .map((c) => normalizeDateMonth(c.end_date))
       .filter(Boolean)
-      .sort()
-      .at(-1) || "2050-12";
+      .sort();
+    const latestKnownEnd = latestKnownEnds.length ? latestKnownEnds[latestKnownEnds.length - 1] : "2050-12";
     ["2026-12", "2030-12", "2035-12", "2040-12", "2045-12", "2050-12"].forEach((m) => {
       if (m >= todayMonth && m <= latestKnownEnd) dates.add(m);
     });
@@ -1828,6 +1828,30 @@ function HousingForecastView({
   }, [balanceTarget, balanceForecast, forecastStart]);
 
   const selectedTooltip = hoveredPoint || null;
+
+  const renderCommitmentCards = (type) => {
+    const rows = grouped[type] || [];
+    if (!rows.length) return <div className="housing-empty">אין נתונים להצגה.</div>;
+    return <div className="housing-commitment-list">{rows.map((c) => (
+      <div className="housing-commitment-card" key={c.id}>
+        <div className="housing-commitment-card-top">
+          <strong>{c.name}</strong>
+          <strong>{money(commitmentPayment(c))}</strong>
+        </div>
+        <div className="housing-commitment-card-meta">יתרה {money(commitmentBalance(c))} · סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
+      </div>
+    ))}</div>;
+  };
+
+  const renderScenarioCards = (rows) => {
+    if (!rows.length) return <div className="housing-empty">אין נתונים להצגה.</div>;
+    return <div className="housing-commitment-list">{rows.map((c) => (
+      <div className="housing-commitment-card" key={`scenario-${c.id}`}>
+        <div className="housing-commitment-card-top"><strong>{c.name}</strong><strong>{money(commitmentPayment(c))}</strong></div>
+        <div className="housing-commitment-card-meta">מצב קיים בלבד · תאריך סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
+      </div>
+    ))}</div>;
+  };
 
   const graph = useMemo(() => {
     // גרף הסיכום מבוסס אך ורק על המצב הקיים:
