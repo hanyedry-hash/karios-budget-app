@@ -127,10 +127,16 @@ const commitmentTypeValue = (c) => {
   if (/הלווא|loan|אשראי|personal.?loan|consumer|רכב|שיפוץ|אישית/.test(name)) return "loan";
   if (/משכנת|mortgage|מסלול/.test(name)) return "mortgage";
 
-  // Mortgage tracks in the existing housing table carry mortgage-specific fields.
-  // If those fields are absent and no explicit type exists, treat the row as a loan
-  // rather than silently hiding it under "other".
-  if (c?.indexation != null || c?.rate_formula != null || c?.rate_type != null || c?.next_rate_change != null || c?.rate_change_months != null) return "mortgage";
+  // Do NOT classify a row as mortgage merely because it has a rate/indexation field.
+  // Loans can have the same financial fields. When the schema does not contain an
+  // explicit type, use the name as the strongest signal and keep the fallback as
+  // "loan" so an otherwise valid loan is never silently counted as a mortgage.
+  const formula = String(c?.rate_formula || "").toLowerCase();
+  const rateType = String(c?.rate_type || "").toLowerCase();
+  const indexation = String(c?.indexation || "").toLowerCase();
+  const mortgageSignals = `${formula} ${rateType} ${indexation}`;
+  if (/משכנת|mortgage|מסלול|צמוד.?מדד|קבועה.?צמוד|קבועה.?לא.?צמוד|פריים.?משכנת/.test(mortgageSignals)) return "mortgage";
+
   return "loan";
 };
 const commitmentTypeLabel = (c) => ({ mortgage: "משכנתא", loan: "הלוואה", other: "התחייבות נוספת" }[commitmentTypeValue(c)] || "התחייבות נוספת");
@@ -1276,11 +1282,11 @@ export default function BudgetApp() {
       )}
 
       <style jsx global>{`
-        .housing-dashboard-card { background:linear-gradient(135deg,#fff,#f0f2ff); border:1px solid #dfe2f1; border-radius:18px; padding:18px; margin-bottom:14px; display:grid; grid-template-columns:1fr auto auto; align-items:center; gap:20px; }
+        .housing-dashboard-card { background:#fff; border:1px solid #e4e8f0; border-radius:18px; padding:18px; margin-bottom:14px; display:grid; grid-template-columns:minmax(0,1fr) auto auto; align-items:center; gap:18px; box-shadow:0 6px 20px rgba(35,45,75,.05); }
         .housing-dashboard-stats { display:flex; gap:28px; }
         .housing-dashboard-stats span { display:block; font-size:12px; color:#72798b; margin-bottom:5px; }
         .housing-dashboard-stats strong { font-size:20px; }
-        .housing-summary-main { display:grid; gap:10px; margin-bottom:16px; }
+        .housing-summary-main { display:grid; grid-template-columns:minmax(0,1.25fr) minmax(0,2fr); gap:10px; margin-bottom:16px; }
         .housing-subtabs { display:flex; gap:8px; overflow-x:auto; padding:4px; margin:0 0 14px; border:1px solid #e1e4ef; border-radius:14px; background:#f7f8fc; scrollbar-width:none; }
         .housing-subtabs::-webkit-scrollbar { display:none; }
         .housing-subtab { flex:0 0 auto; border:0; background:transparent; padding:11px 16px; border-radius:11px; font:inherit; font-weight:700; color:#697083; cursor:pointer; white-space:nowrap; }
@@ -1288,7 +1294,7 @@ export default function BudgetApp() {
         .housing-subtab span { font-size:11px; opacity:.7; margin-right:4px; }
         .housing-type-badge { display:inline-block; margin-right:7px; padding:3px 7px; border-radius:999px; background:#eef0ff; color:#4c58dc; font-size:10px; vertical-align:middle; }
 
-        .housing-total-card { padding:20px; border-radius:18px; background:linear-gradient(135deg,#4c58dc,#6973db); color:#fff; box-shadow:0 10px 30px rgba(76,88,220,.16); }
+        .housing-total-card { min-width:0; padding:22px; border-radius:18px; background:linear-gradient(135deg,#4c58dc,#6973db); color:#fff; box-shadow:0 10px 30px rgba(76,88,220,.16); }
         .housing-total-card span { display:block; opacity:.86; font-size:13px; margin-bottom:6px; }
         .housing-total-card strong { display:block; font-size:32px; line-height:1.1; }
         .housing-total-card small { display:block; margin-top:8px; opacity:.82; }
@@ -1346,6 +1352,9 @@ export default function BudgetApp() {
         .housing-balance-card strong { font-size:19px; }
         .housing-balance-card.unknown { background:#fff8ea; }
         .housing-forecast-note { padding:11px 13px; border-radius:12px; background:#f6f7f9; color:#626979; font-size:12px; line-height:1.6; margin-top:10px; }
+        .housing-forecast-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(150px,220px); gap:10px; margin:12px 0; }
+        .housing-forecast-controls label { display:grid; gap:5px; color:#73798a; font-size:12px; font-weight:700; }
+        .housing-forecast-controls input, .housing-forecast-controls select { width:100%; min-width:0; }
         .housing-empty { padding:28px 14px; text-align:center; color:#777e90; border:1px dashed #dfe2ea; border-radius:14px; }
         .housing-commitment-list { display:grid; gap:8px; }
         .housing-commitment-card { border:1px solid #e6e8ef; border-radius:13px; padding:12px; }
@@ -1353,8 +1362,8 @@ export default function BudgetApp() {
         .housing-commitment-card-meta { margin-top:5px; color:#73798a; font-size:12px; }
         .forecast-controls { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin:14px 0; }
         .forecast-controls label { display:flex; flex-direction:column; gap:6px; font-size:12px; }
-        @media (max-width:900px) { .housing-dashboard-card { grid-template-columns:1fr; } .housing-balance-grid { grid-template-columns:1fr; } .housing-balance-cards { grid-template-columns:1fr 1fr; } }
-        @media (max-width:560px) { .housing-two-cards,.housing-balance-cards,.housing-change-grid,.forecast-controls { grid-template-columns:1fr; } .housing-dashboard-stats { justify-content:space-between; } .housing-total-card strong { font-size:28px; } .housing-chart { height:220px; } .housing-section-card { padding:13px; } .housing-change-top { flex-direction:column; } .housing-mini-card { padding:13px; } .forecast-current-badge { align-self:stretch; } .forecast-controls.compact { grid-template-columns:1fr 1fr; } }
+        @media (max-width:900px) { .housing-dashboard-card { grid-template-columns:1fr; } .housing-summary-main { grid-template-columns:1fr; } .housing-balance-grid { grid-template-columns:1fr; } .housing-balance-cards { grid-template-columns:1fr 1fr; } }
+        @media (max-width:560px) { .housing-two-cards,.housing-balance-cards,.housing-change-grid,.forecast-controls { grid-template-columns:1fr; } .housing-dashboard-stats { justify-content:space-between; } .housing-total-card strong { font-size:28px; } .housing-chart { height:220px; } .housing-section-card { padding:13px; } .housing-change-top { flex-direction:column; } .housing-mini-card { padding:13px; } .forecast-current-badge { align-self:stretch; } .forecast-controls.compact { grid-template-columns:1fr 1fr; } .housing-subtabs { margin-inline:-2px; } }
 
         .expense-filters {
           display: grid;
@@ -1463,7 +1472,18 @@ function HousingForecastView({
   }), [commitments]);
 
   const targetOptions = useMemo(() => {
-    const dates = new Set([todayMonth, "2026-12", "2030-12", "2035-12", "2040-12", "2045-12", "2050-12"]);
+    const dates = new Set([todayMonth]);
+    // Useful future checkpoints are generated only when they are within the
+    // forecast horizon or before the latest known commitment end date. They are
+    // display checkpoints, not new financial data.
+    const latestKnownEnd = (commitments || [])
+      .map((c) => normalizeDateMonth(c.end_date))
+      .filter(Boolean)
+      .sort()
+      .at(-1) || "2050-12";
+    ["2026-12", "2030-12", "2035-12", "2040-12", "2045-12", "2050-12"].forEach((m) => {
+      if (m >= todayMonth && m <= latestKnownEnd) dates.add(m);
+    });
     (commitments || []).forEach((c) => {
       if (c.end_date) dates.add(normalizeDateMonth(c.end_date));
       if (c.next_rate_change) dates.add(normalizeDateMonth(c.next_rate_change));
@@ -1595,7 +1615,7 @@ function HousingForecastView({
             <div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל · מוצגות רק נקודות שינוי משמעותיות</p></div>
             <div className="forecast-current-badge"><span>היום</span><strong>{money(state.totalPayment)}</strong></div>
           </div>
-          <div className="forecast-controls compact">
+          <div className="forecast-controls compact housing-forecast-controls">
             <label>מתחיל מ־<input type="month" value={forecastStart} onChange={(e) => setForecastStart(e.target.value)} /></label>
             <label>טווח<select value={forecastMonths} onChange={(e) => setForecastMonths(Number(e.target.value))}><option value={24}>24 חודשים</option><option value={36}>3 שנים</option><option value={60}>5 שנים</option><option value={120}>10 שנים</option><option value={240}>20 שנים</option><option value={360}>30 שנים</option></select></label>
           </div>
