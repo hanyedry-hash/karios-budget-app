@@ -239,6 +239,93 @@ export default function BudgetApp() {
     }
   }
 
+  function fixedIncomeKey(t) {
+    return [
+      String(t?.description || "").trim().toLowerCase(),
+      String(t?.person_user_id || ""),
+      String(t?.category_id || ""),
+    ].join("|");
+  }
+
+  function fixedIncomeTargetDate(sourceDate, targetMonth) {
+    const source = new Date(`${sourceDate || ""}T00:00:00`);
+    const wantedDay = Number.isNaN(source.getTime()) ? 1 : source.getDate();
+    const [year, monthNumber] = targetMonth.split("-").map(Number);
+    const lastDay = new Date(year, monthNumber, 0).getDate();
+    const day = Math.min(Math.max(wantedDay, 1), lastDay);
+    return `${targetMonth}-${String(day).padStart(2, "0")}`;
+  }
+
+  async function createNextMonthFixedIncome(householdId, source) {
+    if (
+      !source ||
+      source.kind !== "income" ||
+      source.expense_type !== "fixed" ||
+      !source.transaction_date
+    ) {
+      return null;
+    }
+
+    const sourceMonth = String(source.transaction_date).slice(0, 7);
+    const targetMonth = shiftMonth(sourceMonth, 1);
+    const targetEnd = shiftMonth(targetMonth, 1);
+    const key = fixedIncomeKey(source);
+
+    // בדיקה מול מסד הנתונים עצמו, כדי שגם אם החודש הבא כבר נטען
+    // או שהפונקציה נקראה פעמיים, לא תיווצר כפילות.
+    const { data: existingRows, error: existingError } = await supabase
+      .from("transactions")
+      .select("*")
+      .eq("household_id", householdId)
+      .eq("kind", "income")
+      .eq("expense_type", "fixed")
+      .gte("transaction_date", `${targetMonth}-01`)
+      .lt("transaction_date", `${targetEnd}-01`);
+
+    if (existingError) throw existingError;
+
+    const existing = (existingRows || []).find(
+      (t) => fixedIncomeKey(t) === key
+    );
+
+    if (existing) return existing;
+
+    const row = {
+      household_id: householdId,
+      created_by: user?.id || null,
+      kind: "income",
+      description: String(source.description || "").trim(),
+      category_id: source.category_id || null,
+      transaction_date: fixedIncomeTargetDate(
+        source.transaction_date,
+        targetMonth
+      ),
+      planned_amount: Number(
+        source.planned_amount ?? source.actual_amount ?? 0
+      ),
+      completed: false,
+      actual_amount: null,
+      expense_type: "fixed",
+      person_user_id: source.person_user_id || null,
+      note: source.note
+        ? `${source.note} · נוצר אוטומטית מהכנסה קבועה`
+        : "נוצר אוטומטית מהכנסה קבועה",
+      payment_method: source.payment_method || null,
+      merchant: source.merchant || null,
+      credit_card_last4: source.credit_card_last4 || null,
+      credit_card_provider: source.credit_card_provider || null,
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from("transactions")
+      .insert(row)
+      .select("*")
+      .single();
+
+    if (insertError) throw insertError;
+    return inserted || null;
+  }
+
   async function syncFixedIncomeTransactions(
     householdId,
     currentRows,
@@ -250,62 +337,20 @@ export default function BudgetApp() {
 
     if (!previous.length) return rows;
 
-    const keyOf = (t) =>
-      [
-        String(t.description || "").trim().toLowerCase(),
-        String(t.person_user_id || ""),
-        String(t.category_id || ""),
-      ].join("|");
-
     const currentFixedKeys = new Set(
       rows
         .filter((t) => t.kind === "income" && t.expense_type === "fixed")
-        .map(keyOf)
+        .map(fixedIncomeKey)
     );
 
     for (const source of previous) {
-      const key = keyOf(source);
+      const key = fixedIncomeKey(source);
       if (!key || currentFixedKeys.has(key)) continue;
 
-      const sourceDate = new Date(`${source.transaction_date}T00:00:00`);
-      const wantedDay = Number.isNaN(sourceDate.getTime())
-        ? 1
-        : sourceDate.getDate();
-      const [year, monthNumber] = currentMonth.split("-").map(Number);
-      const lastDay = new Date(year, monthNumber, 0).getDate();
-      const day = Math.min(Math.max(wantedDay, 1), lastDay);
-
-      const row = {
-        household_id: householdId,
-        created_by: user?.id || null,
-        kind: "income",
-        description: String(source.description || "").trim(),
-        category_id: source.category_id || null,
-        transaction_date: `${currentMonth}-${String(day).padStart(2, "0")}`,
-        planned_amount: Number(source.planned_amount ?? source.actual_amount ?? 0),
-        completed: false,
-        actual_amount: null,
-        expense_type: "fixed",
-        person_user_id: source.person_user_id || null,
-        note: source.note
-          ? `${source.note} · נוצר אוטומטית מהכנסה קבועה`
-          : "נוצר אוטומטית מהכנסה קבועה",
-        payment_method: source.payment_method || null,
-        merchant: source.merchant || null,
-        credit_card_last4: source.credit_card_last4 || null,
-        credit_card_provider: source.credit_card_provider || null,
-      };
-
-      const { data: inserted, error } = await supabase
-        .from("transactions")
-        .insert(row)
-        .select("*")
-        .single();
-
-      if (error) {
-        console.error("syncFixedIncomeTransactions:", error);
-        continue;
-      }
+      const inserted = await createNextMonthFixedIncome(householdId, {
+        ...source,
+        transaction_date: source.transaction_date,
+      });
 
       if (inserted) {
         rows.push(inserted);
@@ -534,6 +579,26 @@ export default function BudgetApp() {
 
       const result = await q.select("*").single();
       if (result.error) throw result.error;
+
+      // הכנסה קבועה: מיד לאחר השמירה יוצרים גם את המופע של החודש הבא.
+      // כך לא צריך לחכות שהחודש הבא ייפתח כדי שההכנסה תופיע.
+      const savedTx = result.data;
+      if (
+        savedTx?.kind === "income" &&
+        savedTx?.expense_type === "fixed"
+      ) {
+        try {
+          await createNextMonthFixedIncome(household.id, savedTx);
+        } catch (syncError) {
+          console.error("createNextMonthFixedIncome:", syncError);
+          setError(
+            `ההכנסה נשמרה, אבל לא הצלחתי ליצור את ההכנסה הקבועה בחודש הבא: ${
+              syncError.message || "שגיאה לא ידועה"
+            }`
+          );
+          return;
+        }
+      }
 
       // אם ההוצאה הקבועה שנערכה הפכה למשתנה, בדוק אם נשארו עסקאות
       // אחרות שמקושרות לאותה הגדרה. אם לא, מסירים את ההגדרה.
