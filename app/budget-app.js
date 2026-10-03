@@ -1667,6 +1667,20 @@ export default function BudgetApp() {
         .housing-balance-card span { display:block; color:#73798a; font-size:12px; margin-bottom:5px; }
         .housing-balance-card strong { font-size:19px; }
         .housing-balance-card.unknown { background:#fff8ea; }
+        .housing-date-forecast { max-width: 900px; }
+        .housing-forecast-date-control { display:grid; gap:6px; max-width:320px; margin-bottom:10px; }
+        .housing-forecast-date-control label { color:#73798a; font-size:12px; font-weight:700; }
+        .housing-forecast-date-control input { width:100%; }
+        .housing-forecast-date-label { color:#73798a; font-size:12px; margin:8px 0 14px; }
+        .housing-forecast-current-note { padding:11px 13px; border-radius:12px; background:#f2f3ff; color:#555f9e; font-size:12px; margin-bottom:12px; }
+        .housing-forecast-target-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+        .housing-forecast-payment-card { margin-top:10px; padding:18px; border-radius:16px; background:#f2f3ff; }
+        .housing-forecast-payment-card > span { display:block; color:#73798a; font-size:12px; margin-bottom:5px; }
+        .housing-forecast-payment-card > strong { display:block; color:#4d59cf; font-size:30px; }
+        .housing-forecast-payment-breakdown { display:flex; flex-wrap:wrap; gap:18px; margin-top:10px; color:#626979; font-size:12px; }
+        .housing-forecast-payment-breakdown strong { color:#303747; }
+        .housing-forecast-warning { margin-top:10px; padding:11px 13px; border-radius:12px; background:#fff8ea; color:#7b5b1c; font-size:12px; line-height:1.6; }
+
         .housing-forecast-note { padding:11px 13px; border-radius:12px; background:#f6f7f9; color:#626979; font-size:12px; line-height:1.6; margin-top:10px; }
         .housing-forecast-controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(150px,220px); gap:10px; margin:12px 0; }
         .housing-forecast-controls label { display:grid; gap:5px; color:#73798a; font-size:12px; font-weight:700; }
@@ -1753,6 +1767,10 @@ export default function BudgetApp() {
         @media (max-width: 520px) {
           .payment-summary-head { align-items: flex-start; flex-direction: column; }
           .expenses-data-table .expense-column-head { align-items: flex-start; }
+        }
+        @media (max-width: 720px) {
+          .housing-forecast-target-grid { grid-template-columns:1fr; }
+          .housing-forecast-payment-card > strong { font-size:26px; }
         }
       `}</style>
     </main>
@@ -1850,15 +1868,6 @@ function HousingForecastView({
     ))}</div>;
   };
 
-  const renderScenarioCards = (rows) => {
-    if (!rows.length) return <div className="housing-empty">אין נתונים להצגה.</div>;
-    return <div className="housing-commitment-list">{rows.map((c) => (
-      <div className="housing-commitment-card" key={`scenario-${c.id}`}>
-        <div className="housing-commitment-card-top"><strong>{c.name}</strong><strong>{money(commitmentPayment(c))}</strong></div>
-        <div className="housing-commitment-card-meta">מצב קיים בלבד · תאריך סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
-      </div>
-    ))}</div>;
-  };
 
   const graph = useMemo(() => {
     // גרף הסיכום מבוסס אך ורק על המצב הקיים:
@@ -1968,7 +1977,7 @@ function HousingForecastView({
   return (
     <section className="panel housing-panel">
       <div className="panel-head">
-        <div><h2>🏠 דיור ומשכנתא</h2><p>מצב קיים, תחזית, שינויים עתידיים ויתרות לפי תאריך.</p></div>
+        <div><h2>🏠 דיור ומשכנתא</h2><p>מצב קיים של משכנתאות והלוואות.</p></div>
         <button className="ghost" onClick={onRefresh}>רענון</button>
       </div>
       {error && <div className="error">{error}</div>}
@@ -1983,29 +1992,27 @@ function HousingForecastView({
       </section>
 
       <nav className="housing-subtabs" aria-label="תתי עמודים בדיור ומשכנתא">
-        {[['summary','סיכום'],['mortgage','משכנתאות'],['loan','הלוואות'],['other','התחייבויות נוספות']].map(([id,label]) => (
-          <button key={id} className={housingSubTab === id ? 'housing-subtab active' : 'housing-subtab'} onClick={() => setHousingSubTab(id)}>{label}<span>{id==='summary' ? '' : ` ${grouped[id].length}`}</span></button>
+        {[['summary','סיכום'],['mortgage','משכנתאות'],['loan','הלוואות'],['other','התחייבויות נוספות'],['forecast','תחזית']].map(([id,label]) => (
+          <button key={id} className={housingSubTab === id ? 'housing-subtab active' : 'housing-subtab'} onClick={() => setHousingSubTab(id)}>{label}<span>{['summary','forecast'].includes(id) ? '' : ` ${grouped[id].length}`}</span></button>
         ))}
       </nav>
 
-      {housingSubTab === 'mortgage' && <>
+      {housingSubTab === 'mortgage' && (
         <section className="housing-section-card"><div className="housing-section-head"><div><h3>🏠 משכנתאות</h3><p>כל מסלולי המשכנתא הקיימים במערכת.</p></div></div>{renderCommitmentCards('mortgage')}</section>
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📉 תחזית המשכנתאות</h3><p>התחזית מבוססת רק על הנתונים הקיימים.</p></div></div>{renderScenarioCards(grouped.mortgage)}</section>
-      </>}
+      )}
 
-      {housingSubTab === 'loan' && <>
+      {housingSubTab === 'loan' && (
         <section className="housing-section-card"><div className="housing-section-head"><div><h3>💳 הלוואות</h3><p>הלוואות שאינן מסלולי משכנתא.</p></div></div>{renderCommitmentCards('loan')}</section>
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📉 תחזית ההלוואות</h3><p>התחזית מוצגת בנפרד מהמשכנתאות.</p></div></div>{renderScenarioCards(grouped.loan)}</section>
-      </>}
+      )}
 
       {housingSubTab === 'other' && <section className="housing-section-card"><div className="housing-section-head"><div><h3>📌 התחייבויות נוספות</h3><p>התחייבויות שאינן מסווגות כמשכנתא או הלוואה.</p></div></div>{renderCommitmentCards('other')}</section>}
 
-      {housingSubTab === 'summary' && <>
+      {housingSubTab === 'summary' && (
         <section className="housing-section-card housing-forecast-card">
           <div className="housing-section-head">
             <div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל</p></div>
           </div>
-          {selectedTooltip && <div className="housing-chart-tooltip"><div><strong>{monthLabel(selectedTooltip.month)}</strong></div><div>לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong> · אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong> · שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>{selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}<div className="muted">{selectedTooltip.reason || "סיבה לא ידועה"}</div></div>}
+          {selectedTooltip && <div className="housing-chart-tooltip"><div><strong>{monthLabel(selectedTooltip.month)}</strong></div><div>לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong> · אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong> · שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>{selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}<div className="muted">{selectedTooltip.reason || "תאריך סיום התחייבות"}</div></div>}
           <div className="housing-chart-wrap"><svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
@@ -2026,13 +2033,143 @@ function HousingForecastView({
           </svg></div>
           <div className="housing-legend">כל נקודה בגרף מייצגת את היום או תאריך סיום של התחייבות. החישוב מבוסס על המצב הקיים בלבד: בכל תאריך סיום יורד ההחזר החודשי של ההתחייבות שהסתיימה. הזמן מתקדם מימין לשמאל.</div>
         </section>
+      )}
 
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📅 השינויים הצפויים בהחזר</h3><p>רשימה כרונולוגית של נקודות שבהן התשלום משתנה או צפוי להשתנות.</p></div></div>{changePoints.length ? <div className="housing-changes">{changePoints.map((cp) => <div key={cp.id} className={`housing-change-card ${selectedChange === cp.id ? "selected" : ""}`} onClick={() => setSelectedChange(cp.id)}><div className="housing-change-top"><div className="housing-change-date">{dateText(`${cp.month}-01`)}</div><div className={`housing-change-delta ${cp.delta != null && cp.delta < 0 ? "down" : cp.delta > 0 ? "up" : ""}`}>{fmtDelta(cp.delta)}</div></div><div className="housing-change-grid"><div><span>לפני</span><strong>{cp.beforePayment == null ? "לא ידוע" : money(cp.beforePayment)}</strong></div><div><span>אחרי</span><strong>{cp.knownAfter ? money(cp.afterPayment) : "לא ניתן לחישוב"}</strong></div><div><span>סטטוס</span><strong>{cp.knownAfter ? "מחושב" : "צפוי שינוי"}</strong></div></div><div className="housing-change-reason">{cp.reason || "סיבה לא ידועה"}</div>{cp.commitments?.length > 0 && <div className="housing-change-commitments">{cp.commitments.map((x) => <span className="housing-change-chip" key={x.id}>{x.name}</span>)}</div>}</div>)}</div> : <div className="housing-empty">לא זוהו כרגע נקודות שינוי בטווח התחזית.</div>}</section>
+      {housingSubTab === 'forecast' && (
+        <HousingDateForecast
+          commitments={commitments}
+          state={state}
+          targetOptions={targetOptions}
+          todayMonth={todayMonth}
+        />
+      )}
 
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📊 יתרות לפי תאריך</h3><p>בחרי תאריך וקבלי יתרות עתידיות לפי סוג התחייבות.</p></div></div><div className="housing-balance-grid"><div className="housing-balance-select"><label>תאריך יעד</label><select value={balanceTarget} onChange={(e) => setBalanceTarget(e.target.value)}>{targetOptions.map((m) => <option key={m} value={m}>{dateText(`${m}-01`)}</option>)}</select></div></div>{balanceAtTarget && <div className="housing-balance-cards" style={{marginTop:12}}>{[['mortgage','יתרת משכנתאות צפויה'],['loan','יתרת הלוואות צפויה'],['other','יתרת התחייבויות נוספות'],['total','סה״כ חוב צפוי בתאריך']].map(([key,label]) => <div key={key} className={`housing-balance-card ${balanceAtTarget[key].known === false ? 'unknown' : ''}`}><span>{label}</span><strong>{balanceAtTarget[key].known ? money(balanceAtTarget[key].value) : 'לא ניתן לחישוב'}</strong></div>)}</div>}</section>
-      </>}
+    </section>
+  );
+}
 
-      <div className="housing-forecast-note"><strong>חשוב:</strong> התחזית היא לתצוגה בלבד. היא אינה יוצרת טרנזקציות, הוצאות או הכנסות ואינה משנה את התקציב או נתונים ב-Supabase. כאשר נתון עתידי חסר, המערכת מציגה במפורש שלא ניתן לחשב את הסכום.</div>
+
+function HousingDateForecast({ commitments, state, todayMonth }) {
+  const today = new Date();
+  const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+  const [targetDate, setTargetDate] = useState(todayIso);
+  const targetMonth = normalizeDateMonth(targetDate) || todayMonth;
+
+  const forecast = useMemo(() => {
+    const months = Math.max(1, monthsBetween(todayMonth, targetMonth) + 1);
+    return calculateHousingForecast(commitments, todayMonth, Math.min(months, 360), {});
+  }, [commitments, targetMonth, todayMonth]);
+
+  const row = useMemo(() => {
+    const index = monthsBetween(todayMonth, targetMonth);
+    return forecast.byMonth?.[index] || null;
+  }, [forecast, targetMonth, todayMonth]);
+
+  const totals = useMemo(() => {
+    if (!row) return null;
+
+    const groups = { mortgage: [], loan: [], other: [] };
+    (row.commitments || []).forEach((item) => {
+      if (groups[item.type]) groups[item.type].push(item);
+    });
+
+    const result = {};
+    for (const type of Object.keys(groups)) {
+      const rows = groups[type];
+      const balanceKnown = rows.every((x) => x.balanceKnown !== false);
+      const paymentKnown = rows.every((x) => x.paymentKnown !== false);
+      result[type] = {
+        balanceKnown,
+        paymentKnown,
+        balance: balanceKnown ? rows.reduce((sum, x) => sum + Number(x.balance || 0), 0) : null,
+        payment: paymentKnown ? rows.reduce((sum, x) => sum + Number(x.payment || 0), 0) : null,
+      };
+    }
+
+    const allBalanceKnown = Object.values(result).every((x) => x.balanceKnown);
+    const allPaymentKnown = Object.values(result).every((x) => x.paymentKnown);
+
+    return {
+      ...result,
+      totalBalanceKnown: allBalanceKnown,
+      totalPaymentKnown: allPaymentKnown,
+      totalBalance: allBalanceKnown
+        ? result.mortgage.balance + result.loan.balance + result.other.balance
+        : null,
+      totalPayment: allPaymentKnown
+        ? result.mortgage.payment + result.loan.payment + result.other.payment
+        : null,
+    };
+  }, [row]);
+
+  const isTodayMonth = targetMonth === todayMonth;
+
+  return (
+    <section className="housing-section-card housing-date-forecast">
+      <div className="housing-section-head">
+        <div>
+          <h3>🔮 תחזית</h3>
+          <p>בחרי תאריך וקבלי הערכה של יתרות והחזר חודשי.</p>
+        </div>
+      </div>
+
+      <div className="housing-forecast-date-control">
+        <label>תאריך יעד</label>
+        <input
+          type="date"
+          value={targetDate}
+          min={todayIso}
+          onChange={(e) => setTargetDate(e.target.value)}
+        />
+      </div>
+
+      <div className="housing-forecast-date-label">
+        הנתונים מחושבים לפי חודש היעד: <strong>{dateText(`${targetMonth}-01`)}</strong>
+      </div>
+
+      {isTodayMonth && (
+        <div className="housing-forecast-current-note">
+          זהו החודש הנוכחי. היתרות וההחזר מוצגים לפי המצב הקיים.
+        </div>
+      )}
+
+      {totals && (
+        <>
+          <div className="housing-forecast-target-grid">
+            <div className="housing-balance-card">
+              <span>יתרת משכנתאות בתאריך</span>
+              <strong>{totals.mortgage.balanceKnown ? money(isTodayMonth ? state.mortgageBalance : totals.mortgage.balance) : "לא ניתן לחישוב"}</strong>
+            </div>
+            <div className="housing-balance-card">
+              <span>יתרת הלוואות בתאריך</span>
+              <strong>{totals.loan.balanceKnown ? money(isTodayMonth ? state.loanBalance : totals.loan.balance) : "לא ניתן לחישוב"}</strong>
+            </div>
+            <div className="housing-balance-card">
+              <span>סה״כ יתרה בתאריך</span>
+              <strong>{totals.totalBalanceKnown ? money(isTodayMonth ? state.totalBalance : totals.totalBalance) : "לא ניתן לחישוב"}</strong>
+            </div>
+          </div>
+
+          <div className="housing-forecast-payment-card">
+            <span>הערכה של ההחזר החודשי בתאריך</span>
+            <strong>{totals.totalPaymentKnown ? money(isTodayMonth ? state.totalPayment : totals.totalPayment) : "לא ניתן לחישוב"}</strong>
+            <div className="housing-forecast-payment-breakdown">
+              <span>משכנתאות: <strong>{totals.mortgage.paymentKnown ? money(isTodayMonth ? state.mortgagePayment : totals.mortgage.payment) : "לא ניתן לחישוב"}</strong></span>
+              <span>הלוואות: <strong>{totals.loan.paymentKnown ? money(isTodayMonth ? state.loanPayment : totals.loan.payment) : "לא ניתן לחישוב"}</strong></span>
+            </div>
+          </div>
+
+          {!totals.totalBalanceKnown || !totals.totalPaymentKnown ? (
+            <div className="housing-forecast-warning">
+              חסר מידע עתידי מספיק לחישוב מלא בתאריך שנבחר, ולכן המערכת אינה ממציאה סכום.
+            </div>
+          ) : (
+            <div className="housing-forecast-note">
+              זהו חישוב הערכה לתצוגה בלבד. הוא אינו משנה את התקציב או את נתוני Supabase.
+            </div>
+          )}
+        </>
+      )}
     </section>
   );
 }
