@@ -451,13 +451,24 @@ function calculateHousingForecast(commitments, startMonth, months, scenarios = {
   return { perCommitment, byMonth };
 }
 
+const compareCommitmentEndDate = (a, b) => {
+  const da = normalizeDateMonth(a?.end_date);
+  const db = normalizeDateMonth(b?.end_date);
+  if (da && db) return da.localeCompare(db);
+  if (da) return -1;
+  if (db) return 1;
+  return String(a?.name || "").localeCompare(String(b?.name || ""), "he");
+};
+
+const sortCommitmentsByEndDate = (rows) => [...(rows || [])].sort(compareCommitmentEndDate);
+
 const calculateCurrentHousingState = (commitments) => {
   const rows = commitments || [];
-  const mortgages = rows.filter((c) => commitmentTypeValue(c) === "mortgage");
-  const loans = rows.filter((c) => commitmentTypeValue(c) === "loan");
+  const mortgages = sortCommitmentsByEndDate(rows.filter((c) => commitmentTypeValue(c) === "mortgage"));
+  const loans = sortCommitmentsByEndDate(rows.filter((c) => commitmentTypeValue(c) === "loan"));
   const sumPayment = (list) => list.reduce((s, c) => s + commitmentPayment(c), 0);
   const sumBalance = (list) => list.reduce((s, c) => s + commitmentBalance(c), 0);
-  const other = rows.filter((c) => commitmentTypeValue(c) === "other");
+  const other = sortCommitmentsByEndDate(rows.filter((c) => commitmentTypeValue(c) === "other"));
   return {
     mortgages,
     loans,
@@ -1668,9 +1679,9 @@ function HousingForecastView({
   const todayMonth = monthKey();
 
   const grouped = useMemo(() => ({
-    mortgage: (commitments || []).filter((c) => commitmentTypeValue(c) === "mortgage"),
-    loan: (commitments || []).filter((c) => commitmentTypeValue(c) === "loan"),
-    other: (commitments || []).filter((c) => commitmentTypeValue(c) === "other"),
+    mortgage: sortCommitmentsByEndDate((commitments || []).filter((c) => commitmentTypeValue(c) === "mortgage")),
+    loan: sortCommitmentsByEndDate((commitments || []).filter((c) => commitmentTypeValue(c) === "loan")),
+    other: sortCommitmentsByEndDate((commitments || []).filter((c) => commitmentTypeValue(c) === "other")),
   }), [commitments]);
 
   const targetOptions = useMemo(() => {
@@ -1722,29 +1733,48 @@ function HousingForecastView({
 
   const graph = useMemo(() => {
     const rows = forecast.byMonth || [];
-    const known = rows.filter((r) => r.paymentKnown && r.payment !== null);
-    const max = Math.max(...known.map((r) => Number(r.payment || 0)), state.totalPayment, 1);
-    const min = Math.min(...known.map((r) => Number(r.payment || 0)), state.totalPayment, 0);
+    const first = rows.find((r) => r.month === todayMonth) || rows[0];
+    const graphRows = [];
+    if (first) graphRows.push({ ...first, graphType: "today" });
+
+    changePoints.forEach((cp) => {
+      const row = rows.find((r) => r.month === cp.month);
+      if (!row) return;
+      graphRows.push({
+        ...row,
+        payment: cp.knownAfter ? cp.afterPayment : cp.beforePayment,
+        graphType: cp.knownAfter ? "change" : "unknown",
+        changePoint: cp,
+      });
+    });
+
+    const points = graphRows.filter((row, index, arr) => index === 0 || row.month !== arr[index - 1].month);
+    const knownValues = points.map((r) => Number(r.payment)).filter(Number.isFinite);
+    const max = Math.max(...knownValues, Number(state.totalPayment || 0), 1);
+    const min = Math.min(...knownValues, Number(state.totalPayment || 0), 0);
     const span = Math.max(max - min, 1);
-    const width = 900, height = 290, pad = { left: 58, right: 18, top: 28, bottom: 42 };
+    const width = 900, height = 290, pad = { left: 58, right: 18, top: 28, bottom: 48 };
     const plotW = width - pad.left - pad.right, plotH = height - pad.top - pad.bottom;
     const graphRight = width - pad.right;
-    const x = (i) => graphRight - (i / Math.max(rows.length - 1, 1)) * plotW;
+    const x = (rowIndex) => graphRight - (rowIndex / Math.max(rows.length - 1, 1)) * plotW;
     const y = (v) => pad.top + ((max - Number(v)) / span) * plotH;
-    const segments = [];
-    let segment = [];
-    rows.forEach((r, i) => {
-      if (r.paymentKnown && r.payment !== null) segment.push({ ...r, i, x: x(i), y: y(r.payment) });
-      else if (segment.length) { segments.push(segment); segment = []; }
-    });
-    if (segment.length) segments.push(segment);
-    const points = changePoints.map((cp) => {
-      const i = rows.findIndex((r) => r.month === cp.month);
-      const row = rows[i];
-      return { ...cp, i, x: x(Math.max(i, 0)), y: y(row?.paymentKnown ? row.payment : (cp.beforePayment ?? state.totalPayment)) };
-    });
-    const todayIndex = rows.findIndex((r) => r.month === todayMonth);
-    return { rows, width, height, pad, plotW, plotH, max, min, x, y, segments, points, todayIndex };
+
+    return {
+      rows,
+      width,
+      height,
+      pad,
+      plotW,
+      plotH,
+      max,
+      min,
+      x,
+      y,
+      points: points.map((row) => {
+        const i = rows.findIndex((r) => r.month === row.month);
+        return { ...row, i, x: x(i), y: y(row.payment), cp: row.changePoint || null };
+      }),
+    };
   }, [forecast, changePoints, state.totalPayment, todayMonth]);
 
   const selectedTooltip = hoveredPoint || (selectedChange ? changePoints.find((x) => x.id === selectedChange) : null);
@@ -1754,7 +1784,7 @@ function HousingForecastView({
   }
 
   const renderCommitmentCards = (type) => {
-    const list = grouped[type] || [];
+    const list = sortCommitmentsByEndDate(grouped[type] || []);
     if (!list.length) return <div className="housing-empty">אין כרגע {commitmentTypePlural(type)} בנתונים הקיימים.</div>;
     return <div className="housing-commitment-list">{list.map((c) => (
       <div key={c.id} className="housing-commitment-card">
@@ -1764,7 +1794,7 @@ function HousingForecastView({
     ))}</div>;
   };
 
-  const renderScenarioCards = (list) => <div className="loan-card-list">{list.map((loan) => {
+  const renderScenarioCards = (list) => <div className="loan-card-list">{sortCommitmentsByEndDate(list).map((loan) => {
     const scenario = scenarios[loan.id] || {};
     return <div key={loan.id} className={`loan-card ${selectedLoan === loan.id ? "selected" : ""}`} onClick={() => setSelectedLoan(loan.id)}>
       <div className="loan-card-top"><strong>{loan.name}</strong><strong>{money(loan.current_balance)}</strong></div>
@@ -1826,13 +1856,29 @@ function HousingForecastView({
           <div className="housing-chart-wrap"><svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
-            {graph.segments.map((seg, idx) => { const path = seg.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" "); return <path key={idx} className="housing-chart-line" d={path}/>; })}
-            {graph.todayIndex >= 0 && <><line className="housing-chart-unknown" x1={graph.x(graph.todayIndex)} x2={graph.x(graph.todayIndex)} y1={graph.pad.top} y2={graph.height-graph.pad.bottom}/><text className="housing-chart-value" x={graph.x(graph.todayIndex)} y={graph.pad.top-8} textAnchor="middle">היום</text></>}
-            {graph.points.map((point) => <circle key={point.id} className="housing-chart-point change" cx={point.x} cy={point.y} r="6" onMouseEnter={() => setHoveredPoint(point)} onMouseLeave={() => setHoveredPoint(null)} onClick={() => setSelectedChange(point.id)} />)}
-            {graph.rows.map((row, i) => !row.paymentKnown ? <g key={`unknown-${row.month}`}><line className="housing-chart-unknown" x1={graph.x(i)} x2={graph.x(i)} y1={graph.pad.top} y2={graph.height-graph.pad.bottom}/><circle className="housing-chart-point change" cx={graph.x(i)} cy={graph.y(row.commitments.find((x) => x.payment !== null)?.payment ?? state.totalPayment)} r="5" onMouseEnter={() => { const cp = changePoints.find((x) => x.month === row.month); if (cp) setHoveredPoint(cp); }} onMouseLeave={() => setHoveredPoint(null)} onClick={() => { const cp = changePoints.find((x) => x.month === row.month); if (cp) setSelectedChange(cp.id); }} /></g> : null)}
-            {graph.rows.filter((_, i) => i === 0 || i === graph.rows.length-1 || i % Math.max(1, Math.floor(graph.rows.length/6)) === 0).map((row) => { const i = graph.rows.findIndex((x) => x.month === row.month); return <text key={row.month} className="housing-chart-label" x={graph.x(i)} y={graph.height-12} textAnchor="middle">{row.month.slice(0,4)}</text>; })}
+            {graph.points.length > 1 && graph.points.slice(0, -1).map((point, idx) => {
+              const next = graph.points[idx + 1];
+              const horizontalEnd = next.x;
+              const jump = Number(point.payment) !== Number(next.payment);
+              return <g key={`segment-${point.month}`}>
+                <line className="housing-chart-line" x1={point.x} y1={point.y} x2={horizontalEnd} y2={point.y} />
+                {jump && <line className="housing-chart-line" x1={next.x} y1={point.y} x2={next.x} y2={next.y} />}
+              </g>;
+            })}
+            {graph.points.map((point, idx) => {
+              const cp = point.cp;
+              const isToday = idx === 0;
+              const isUnknown = point.graphType === "unknown";
+              return <g key={point.month}>
+                {cp && <line className="housing-chart-unknown" x1={point.x} x2={point.x} y1={graph.pad.top} y2={graph.height-graph.pad.bottom}/>}
+                <circle className={`housing-chart-point ${isToday ? "today" : "change"} ${isUnknown ? "unknown" : ""}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6}
+                  onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)}
+                  onClick={() => cp && setSelectedChange(cp.id)} />
+                <text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : monthLabel(point.month)}</text>
+              </g>;
+            })}
           </svg></div>
-          <div className="housing-legend">נקודה מסומנת = שינוי צפוי. קו מקווקו = נקודת שינוי שבה הסכום החדש אינו ניתן לחישוב מהנתונים הקיימים.</div>
+          <div className="housing-legend">כל נקודה בגרף מייצגת את היום או תאריך שבו ההחזר החודשי משתנה. הקו מתקדם מימין לשמאל; קו מקווקו מסמן שינוי שהסכום החדש שלו אינו ניתן לחישוב מהנתונים הקיימים.</div>
         </section>
 
         <section className="housing-section-card"><div className="housing-section-head"><div><h3>📅 השינויים הצפויים בהחזר</h3><p>רשימה כרונולוגית של נקודות שבהן התשלום משתנה או צפוי להשתנות.</p></div></div>{changePoints.length ? <div className="housing-changes">{changePoints.map((cp) => <div key={cp.id} className={`housing-change-card ${selectedChange === cp.id ? "selected" : ""}`} onClick={() => setSelectedChange(cp.id)}><div className="housing-change-top"><div className="housing-change-date">{dateText(`${cp.month}-01`)}</div><div className={`housing-change-delta ${cp.delta != null && cp.delta < 0 ? "down" : cp.delta > 0 ? "up" : ""}`}>{fmtDelta(cp.delta)}</div></div><div className="housing-change-grid"><div><span>לפני</span><strong>{cp.beforePayment == null ? "לא ידוע" : money(cp.beforePayment)}</strong></div><div><span>אחרי</span><strong>{cp.knownAfter ? money(cp.afterPayment) : "לא ניתן לחישוב"}</strong></div><div><span>סטטוס</span><strong>{cp.knownAfter ? "מחושב" : "צפוי שינוי"}</strong></div></div><div className="housing-change-reason">{cp.reason || "סיבה לא ידועה"}</div>{cp.commitments?.length > 0 && <div className="housing-change-commitments">{cp.commitments.map((x) => <span className="housing-change-chip" key={x.id}>{x.name}</span>)}</div>}</div>)}</div> : <div className="housing-empty">לא זוהו כרגע נקודות שינוי בטווח התחזית.</div>}</section>
