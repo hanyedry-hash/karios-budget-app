@@ -376,7 +376,10 @@ function forecastCommitment(c, startMonth, months, scenario = {}) {
       balanceKnown = true;
       continue;
     }
-    const changeExpected = Boolean(changeMonth && month >= changeMonth);
+    // The current month represents the payment that is actually in force today.
+    // A rate-change date that falls inside the current month becomes a forecast
+    // change point, but must not erase the current payment from the graph.
+    const changeExpected = Boolean(changeMonth && month > startMonth && month >= changeMonth);
     if (changeExpected && scenarioRate !== null) activeRate = scenarioRate;
 
     let payment = null;
@@ -486,31 +489,124 @@ const calculateCurrentHousingState = (commitments) => {
 
 function findPaymentChangePoints(forecast) {
   const rows = forecast?.byMonth || [];
-  const points = [];
+  const perCommitment = forecast?.perCommitment || [];
+  if (!rows.length) return [];
+
+  const firstMonth = rows[0].month;
+  const lastMonth = rows[rows.length - 1].month;
+  const today = new Date();
+  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const eventMap = new Map();
+  const addEvent = (event) => {
+    if (!event?.month) return;
+    const key = event.date || `${event.month}-01`;
+    const existing = eventMap.get(key);
+    eventMap.set(key, {
+      ...(existing || {}),
+      ...event,
+      commitments: [...new Map([...(existing?.commitments || []), ...(event.commitments || [])].map((x) => [x.id, x])).values()],
+    });
+  };
+
+  perCommitment.forEach((item) => {
+    const c = item.commitment || {};
+    const commitmentRows = item.rows || [];
+    const rateChangeRaw = c.next_rate_change;
+    const rateChangeMonth = normalizeDateMonth(rateChangeRaw);
+    const rateChangeDate = rateChangeRaw ? String(rateChangeRaw).slice(0, 10) : "";
+    if (rateChangeMonth && rateChangeMonth >= firstMonth && rateChangeMonth <= lastMonth) {
+      const eventDateObj = rateChangeDate ? new Date(`${rateChangeDate}T00:00:00`) : new Date(`${rateChangeMonth}-01T00:00:00`);
+      if (eventDateObj > todayDate) {
+        const idx = rows.findIndex((r) => r.month === rateChangeMonth);
+        const beforeRow = idx > 0 ? rows[idx - 1] : rows[0];
+        const currentRow = idx >= 0 ? rows[idx] : rows[0];
+        const commitmentRow = idx >= 0 ? commitmentRows[idx] : commitmentRows[0];
+        addEvent({
+          month: rateChangeMonth,
+          date: rateChangeDate || `${rateChangeMonth}-01`,
+          beforePayment: beforeRow?.paymentKnown ? Number(beforeRow.payment || 0) : Number(rows[0]?.payment || 0),
+          afterPayment: null,
+          delta: null,
+          knownAfter: false,
+          commitments: [{
+            id: c.id,
+            name: c.name,
+            type: item.type,
+            payment: commitmentRow?.payment ?? null,
+            paymentKnown: false,
+            reason: "מועד שינוי ריבית; הריבית העתידית אינה ידועה",
+          }],
+          reason: "מועד שינוי ריבית; הריבית העתידית אינה ידועה",
+        });
+      }
+    }
+
+    const endMonth = normalizeDateMonth(c.end_date);
+    if (endMonth) {
+      const stopMonth = shiftMonth(endMonth, 1);
+      if (stopMonth >= firstMonth && stopMonth <= lastMonth) {
+        const idx = rows.findIndex((r) => r.month === stopMonth);
+        if (idx > 0) {
+          const before = rows[idx - 1];
+          const cur = rows[idx];
+          addEvent({
+            month: stopMonth,
+            date: `${stopMonth}-01`,
+            beforePayment: before?.paymentKnown ? Number(before.payment || 0) : null,
+            afterPayment: cur?.paymentKnown ? Number(cur.payment || 0) : 0,
+            delta: before?.paymentKnown && cur?.paymentKnown ? Number(cur.payment || 0) - Number(before.payment || 0) : null,
+            knownAfter: cur?.paymentKnown === true,
+            commitments: [{
+              id: c.id,
+              name: c.name,
+              type: item.type,
+              payment: cur?.payment ?? 0,
+              paymentKnown: cur?.paymentKnown !== false,
+              reason: "התחייבות הסתיימה",
+            }],
+            reason: "התחייבות הסתיימה",
+          });
+        }
+      }
+    }
+  });
+
+  // Calculated payment changes that are not explained by a stored event date.
   for (let i = 1; i < rows.length; i++) {
-    const prev = rows[i - 1], cur = rows[i];
-    const changed = cur.paymentKnown && prev.paymentKnown
-      ? Math.abs(Number(cur.payment || 0) - Number(prev.payment || 0)) >= 1
-      : (!cur.paymentKnown && prev.paymentKnown);
-    if (!changed) continue;
-    const changedCommitments = cur.commitments.filter((item, idx) => {
-      const before = prev.commitments[idx];
-      if (!before) return false;
-      return !item.paymentKnown || !before.paymentKnown || Math.abs(Number(item.payment || 0) - Number(before.payment || 0)) >= 1;
-    });
-    const reasons = [...new Set(changedCommitments.map((x) => x.reason).filter(Boolean))];
-    points.push({
-      id: `${cur.month}-${points.length}`,
-      month: cur.month,
-      beforePayment: prev.payment,
-      afterPayment: cur.payment,
-      delta: cur.paymentKnown && prev.paymentKnown ? Number(cur.payment || 0) - Number(prev.payment || 0) : null,
-      knownAfter: cur.paymentKnown,
-      commitments: changedCommitments,
-      reason: reasons.join(" · ") || (cur.paymentKnown ? "שינוי בתשלום" : "צפוי שינוי בהחזר"),
-    });
+    const prev = rows[i - 1];
+    const cur = rows[i];
+    if (prev.paymentKnown && cur.paymentKnown && Math.abs(Number(cur.payment || 0) - Number(prev.payment || 0)) >= 1) {
+      const changedCommitments = perCommitment.map((item) => {
+        const before = item.rows?.[i - 1];
+        const current = item.rows?.[i];
+        if (!before || !current) return null;
+        if (!before.paymentKnown || !current.paymentKnown) return null;
+        if (Math.abs(Number(current.payment || 0) - Number(before.payment || 0)) < 1) return null;
+        return {
+          id: item.commitment.id,
+          name: item.commitment.name,
+          type: item.type,
+          payment: current.payment,
+          paymentKnown: true,
+          reason: current.reason || "שינוי בתשלום",
+        };
+      }).filter(Boolean);
+      addEvent({
+        month: cur.month,
+        date: `${cur.month}-01`,
+        beforePayment: Number(prev.payment || 0),
+        afterPayment: Number(cur.payment || 0),
+        delta: Number(cur.payment || 0) - Number(prev.payment || 0),
+        knownAfter: true,
+        commitments: changedCommitments,
+        reason: changedCommitments.map((x) => x.reason).filter(Boolean).join(" · ") || "שינוי בתשלום",
+      });
+    }
   }
-  return points;
+
+  return [...eventMap.values()]
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    .map((point, index) => ({ ...point, id: `${point.date}-${index}` }));
 }
 
 const buildHousingForecast = (commitments, startMonth, months, scenarios) =>
@@ -1734,29 +1830,48 @@ function HousingForecastView({
   const graph = useMemo(() => {
     const rows = forecast.byMonth || [];
     const first = rows.find((r) => r.month === todayMonth) || rows[0];
-    const graphRows = [];
-    if (first) graphRows.push({ ...first, graphType: "today" });
+    if (!first) return { rows, width: 900, height: 290, pad: { left: 58, right: 18, top: 28, bottom: 48 }, plotW: 824, plotH: 214, max: 1, min: 0, points: [] };
+
+    const startDate = new Date(`${todayMonth}-01T00:00:00`);
+    const now = new Date();
+    const todayPointDate = now.getFullYear() === Number(todayMonth.slice(0, 4)) && now.getMonth() + 1 === Number(todayMonth.slice(5, 7))
+      ? now
+      : startDate;
+    const lastRow = rows[rows.length - 1];
+    const endDate = new Date(`${lastRow.month}-28T00:00:00`);
+    endDate.setMonth(endDate.getMonth() + 1, 0);
+
+    const points = [{
+      month: first.month,
+      date: todayKey(todayPointDate),
+      payment: Number(state.totalPayment || first.payment || 0),
+      graphType: "today",
+      cp: null,
+    }];
 
     changePoints.forEach((cp) => {
       const row = rows.find((r) => r.month === cp.month);
       if (!row) return;
-      graphRows.push({
-        ...row,
-        payment: cp.knownAfter ? cp.afterPayment : cp.beforePayment,
+      points.push({
+        month: cp.month,
+        date: cp.date || `${cp.month}-01`,
+        payment: cp.knownAfter ? Number(cp.afterPayment || 0) : Number(cp.beforePayment || 0),
         graphType: cp.knownAfter ? "change" : "unknown",
         changePoint: cp,
       });
     });
 
-    const points = graphRows.filter((row, index, arr) => index === 0 || row.month !== arr[index - 1].month);
-    const knownValues = points.map((r) => Number(r.payment)).filter(Number.isFinite);
+    const unique = [...new Map(points.map((p) => [p.date, p])).values()]
+      .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const knownValues = unique.map((p) => Number(p.payment)).filter(Number.isFinite);
     const max = Math.max(...knownValues, Number(state.totalPayment || 0), 1);
-    const min = Math.min(...knownValues, Number(state.totalPayment || 0), 0);
+    const min = Math.min(...knownValues, 0);
     const span = Math.max(max - min, 1);
     const width = 900, height = 290, pad = { left: 58, right: 18, top: 28, bottom: 48 };
     const plotW = width - pad.left - pad.right, plotH = height - pad.top - pad.bottom;
     const graphRight = width - pad.right;
-    const x = (rowIndex) => graphRight - (rowIndex / Math.max(rows.length - 1, 1)) * plotW;
+    const totalMs = Math.max(endDate.getTime() - todayPointDate.getTime(), 1);
+    const x = (date) => graphRight - ((new Date(`${date}T00:00:00`).getTime() - todayPointDate.getTime()) / totalMs) * plotW;
     const y = (v) => pad.top + ((max - Number(v)) / span) * plotH;
 
     return {
@@ -1770,10 +1885,7 @@ function HousingForecastView({
       min,
       x,
       y,
-      points: points.map((row) => {
-        const i = rows.findIndex((r) => r.month === row.month);
-        return { ...row, i, x: x(i), y: y(row.payment), cp: row.changePoint || null };
-      }),
+      points: unique.map((point) => ({ ...point, x: x(point.date), y: y(point.payment), cp: point.changePoint || null })),
     };
   }, [forecast, changePoints, state.totalPayment, todayMonth]);
 
@@ -1858,10 +1970,9 @@ function HousingForecastView({
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
             {graph.points.length > 1 && graph.points.slice(0, -1).map((point, idx) => {
               const next = graph.points[idx + 1];
-              const horizontalEnd = next.x;
-              const jump = Number(point.payment) !== Number(next.payment);
-              return <g key={`segment-${point.month}`}>
-                <line className="housing-chart-line" x1={point.x} y1={point.y} x2={horizontalEnd} y2={point.y} />
+              const jump = Number(point.payment) !== Number(next.payment) || Boolean(next.cp);
+              return <g key={`segment-${point.date}`}>
+                <line className="housing-chart-line" x1={point.x} y1={point.y} x2={next.x} y2={point.y} />
                 {jump && <line className="housing-chart-line" x1={next.x} y1={point.y} x2={next.x} y2={next.y} />}
               </g>;
             })}
@@ -1874,7 +1985,7 @@ function HousingForecastView({
                 <circle className={`housing-chart-point ${isToday ? "today" : "change"} ${isUnknown ? "unknown" : ""}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6}
                   onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)}
                   onClick={() => cp && setSelectedChange(cp.id)} />
-                <text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : monthLabel(point.month)}</text>
+                <text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : dateText(point.date)}</text>
               </g>;
             })}
           </svg></div>
