@@ -93,17 +93,24 @@ const calculateFutureBalance = (principal, annualRate, payment, months) => {
 };
 
 const commitmentTypeValue = (c) => {
-  const explicit = [c?.commitment_type, c?.housing_type, c?.loan_type, c?.type, c?.kind]
+  const explicit = [c?.commitment_type, c?.housing_type, c?.loan_type, c?.type, c?.kind, c?.category]
     .find((v) => v !== null && v !== undefined && String(v).trim() !== "");
   if (explicit) {
-    const v = String(explicit).toLowerCase();
-    if (/mortgage|משכנת/.test(v)) return "mortgage";
-    if (/loan|הלווא|אשראי/.test(v)) return "loan";
+    const v = String(explicit).toLowerCase().trim();
+    if (/mortgage|משכנת|mort/.test(v)) return "mortgage";
+    if (/loan|הלווא|אשראי|personal.?loan|consumer|bank.?loan|הלוואה/.test(v)) return "loan";
+    if (/other|אחר|commitment|התחייב/.test(v)) return "other";
   }
   const name = String(c?.name || "").toLowerCase();
-  return /הלווא|loan|אשראי/.test(name) ? "loan" : "mortgage";
+  if (/הלווא|loan|אשראי|personal.?loan|consumer/.test(name)) return "loan";
+  if (/משכנת|mortgage/.test(name)) return "mortgage";
+  // Existing mortgage records in this app are typically mortgage tracks and carry rate/indexation data.
+  // Do not classify an unrecognized record as a loan just because its type field is missing.
+  if (c?.indexation != null || c?.rate_formula != null || c?.rate_type != null) return "mortgage";
+  return "other";
 };
-const commitmentTypeLabel = (c) => commitmentTypeValue(c) === "loan" ? "הלוואה" : "משכנתא";
+const commitmentTypeLabel = (c) => ({ mortgage: "משכנתא", loan: "הלוואה", other: "התחייבות נוספת" }[commitmentTypeValue(c)] || "התחייבות נוספת");
+const commitmentTypePlural = (type) => ({ mortgage: "משכנתאות", loan: "הלוואות", other: "התחייבויות נוספות" }[type] || "התחייבויות");
 const scenarioNumber = (v) => v === "" || v == null || !Number.isFinite(Number(v)) ? null : Number(v);
 
 function forecastCommitment(c, startMonth, months, scenario = {}) {
@@ -1245,6 +1252,13 @@ export default function BudgetApp() {
         .housing-dashboard-stats span { display:block; font-size:12px; color:#72798b; margin-bottom:5px; }
         .housing-dashboard-stats strong { font-size:20px; }
         .housing-summary-main { display:grid; gap:10px; margin-bottom:16px; }
+        .housing-subtabs { display:flex; gap:8px; overflow-x:auto; padding:4px; margin:0 0 14px; border:1px solid #e1e4ef; border-radius:14px; background:#f7f8fc; scrollbar-width:none; }
+        .housing-subtabs::-webkit-scrollbar { display:none; }
+        .housing-subtab { flex:0 0 auto; border:0; background:transparent; padding:11px 16px; border-radius:11px; font:inherit; font-weight:700; color:#697083; cursor:pointer; white-space:nowrap; }
+        .housing-subtab.active { background:#fff; color:#4c58dc; box-shadow:0 2px 10px rgba(30,35,70,.08); }
+        .housing-subtab span { font-size:11px; opacity:.7; margin-right:4px; }
+        .housing-type-badge { display:inline-block; margin-right:7px; padding:3px 7px; border-radius:999px; background:#eef0ff; color:#4c58dc; font-size:10px; vertical-align:middle; }
+
         .housing-total-card { padding:20px; border-radius:18px; background:linear-gradient(135deg,#4c58dc,#6973db); color:#fff; box-shadow:0 10px 30px rgba(76,88,220,.16); }
         .housing-total-card span { display:block; opacity:.86; font-size:13px; margin-bottom:6px; }
         .housing-total-card strong { display:block; font-size:32px; line-height:1.1; }
@@ -1400,7 +1414,14 @@ function HousingForecastView({
   const [selectedChange, setSelectedChange] = useState(null);
   const [balanceTarget, setBalanceTarget] = useState("");
   const [hoveredPoint, setHoveredPoint] = useState(null);
+  const [housingSubTab, setHousingSubTab] = useState("summary");
   const todayMonth = monthKey();
+
+  const grouped = useMemo(() => ({
+    mortgage: (commitments || []).filter((c) => commitmentTypeValue(c) === "mortgage"),
+    loan: (commitments || []).filter((c) => commitmentTypeValue(c) === "loan"),
+    other: (commitments || []).filter((c) => commitmentTypeValue(c) === "other"),
+  }), [commitments]);
 
   const targetOptions = useMemo(() => {
     const dates = new Set([todayMonth, "2026-12", "2030-12", "2035-12", "2040-12", "2045-12", "2050-12"]);
@@ -1412,39 +1433,31 @@ function HousingForecastView({
   }, [commitments, todayMonth]);
 
   useEffect(() => {
-    if (!balanceTarget || !targetOptions.includes(balanceTarget)) {
-      setBalanceTarget(targetOptions[0] || todayMonth);
-    }
+    if (!balanceTarget || !targetOptions.includes(balanceTarget)) setBalanceTarget(targetOptions[0] || todayMonth);
   }, [balanceTarget, targetOptions, todayMonth]);
 
   const balanceForecast = useMemo(() => {
     if (!balanceTarget) return null;
     const monthsToTarget = monthsBetween(forecastStart, balanceTarget);
     if (monthsToTarget < 0) return null;
-    return calculateHousingForecast(
-      commitments,
-      forecastStart,
-      Math.max(forecastMonths, monthsToTarget + 1),
-      scenarios
-    );
+    return calculateHousingForecast(commitments, forecastStart, Math.max(forecastMonths, monthsToTarget + 1), scenarios);
   }, [balanceTarget, commitments, forecastStart, forecastMonths, scenarios]);
 
   const balanceAtTarget = useMemo(() => {
     if (!balanceTarget || !balanceForecast) return null;
     const monthsToTarget = monthsBetween(forecastStart, balanceTarget);
-    if (monthsToTarget < 0 || monthsToTarget >= balanceForecast.byMonth.length) {
-      return { known: false, mortgage: null, loan: null, total: null };
-    }
-    const row = balanceForecast.byMonth[monthsToTarget];
+    const row = balanceForecast.byMonth?.[monthsToTarget];
     if (!row) return null;
-    const mortgages = row.commitments.filter((x) => x.type === "mortgage");
-    const loans = row.commitments.filter((x) => x.type === "loan");
-    const mortgageKnown = mortgages.every((x) => x.balanceKnown);
-    const loanKnown = loans.every((x) => x.balanceKnown);
-    const mortgage = mortgageKnown ? mortgages.reduce((s, x) => s + Number(x.balance || 0), 0) : null;
-    const loan = loanKnown ? loans.reduce((s, x) => s + Number(x.balance || 0), 0) : null;
-    return { known: mortgageKnown && loanKnown, mortgage, loan, total: mortgageKnown && loanKnown ? mortgage + loan : null, mortgageKnown, loanKnown };
-  }, [balanceTarget, forecast, forecastStart]);
+    const result = {};
+    ["mortgage", "loan", "other"].forEach((type) => {
+      const rows = row.commitments.filter((x) => x.type === type);
+      const known = rows.every((x) => x.balanceKnown);
+      result[type] = { known, value: known ? rows.reduce((sum, x) => sum + Number(x.balance || 0), 0) : null };
+    });
+    const allKnown = ["mortgage", "loan", "other"].every((type) => result[type].known);
+    result.total = { known: allKnown, value: allKnown ? result.mortgage.value + result.loan.value + result.other.value : null };
+    return result;
+  }, [balanceTarget, balanceForecast, forecastStart]);
 
   const graph = useMemo(() => {
     const rows = forecast.byMonth || [];
@@ -1475,43 +1488,77 @@ function HousingForecastView({
 
   const selectedTooltip = hoveredPoint || (selectedChange ? changePoints.find((x) => x.id === selectedChange) : null);
   const fmtDelta = (d) => d == null ? "לא ניתן לחישוב" : `${d > 0 ? "+" : ""}${money(d)}`;
-
   function updateScenario(id, key, value) {
     setScenarios((prev) => ({ ...prev, [id]: { ...(prev[id] || {}), [key]: value } }));
   }
 
+  const renderCommitmentCards = (type) => {
+    const list = grouped[type] || [];
+    if (!list.length) return <div className="housing-empty">אין כרגע {commitmentTypePlural(type)} בנתונים הקיימים.</div>;
+    return <div className="housing-commitment-list">{list.map((c) => (
+      <div key={c.id} className="housing-commitment-card">
+        <div className="housing-commitment-card-top"><div><strong>{c.name || "ללא שם"}</strong><span className="housing-type-badge">{commitmentTypeLabel(c)}</span></div><strong>{money(c.current_payment)}</strong></div>
+        <div className="housing-commitment-card-meta">יתרה {money(c.current_balance)} · ריבית {c.interest_rate != null ? `${Number(c.interest_rate).toFixed(3)}%` : "לא ידועה"} · סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
+      </div>
+    ))}</div>;
+  };
+
+  const renderScenarioCards = (list) => <div className="loan-card-list">{list.map((loan) => {
+    const scenario = scenarios[loan.id] || {};
+    return <div key={loan.id} className={`loan-card ${selectedLoan === loan.id ? "selected" : ""}`} onClick={() => setSelectedLoan(loan.id)}>
+      <div className="loan-card-top"><strong>{loan.name}</strong><strong>{money(loan.current_balance)}</strong></div>
+      <div className="loan-card-meta">{commitmentTypeLabel(loan)} · תשלום נוכחי {money(loan.current_payment)} · שינוי ריבית {loan.next_rate_change ? dateText(loan.next_rate_change) : "לא מוגדר"}</div>
+      {selectedLoan === loan.id && <div className="scenario-grid" style={{marginTop:12}} onClick={(e) => e.stopPropagation()}>
+        <label>ריבית אחרי שינוי<input type="number" min="0" max="30" step="0.01" value={scenario.rate ?? ""} onChange={(e) => updateScenario(loan.id,"rate",e.target.value)} placeholder={loan.interest_rate != null ? String(loan.interest_rate) : "לדוגמה 4.25"} /></label>
+        <label>או תשלום חודשי<input type="number" min="0" step="1" value={scenario.payment ?? ""} onChange={(e) => updateScenario(loan.id,"payment",e.target.value)} placeholder="אופציונלי" /></label>
+      </div>}
+    </div>;
+  })}</div>;
+
   return (
     <section className="panel housing-panel">
       <div className="panel-head">
-        <div><h2>🏠 דיור ומשכנתא</h2><p>מצב קיים, החזר חודשי צפוי, שינויים עתידיים ויתרות לפי תאריך.</p></div>
+        <div><h2>🏠 דיור ומשכנתא</h2><p>מצב קיים, תחזית, שינויים עתידיים ויתרות לפי תאריך.</p></div>
         <button className="ghost" onClick={onRefresh}>רענון</button>
       </div>
       {error && <div className="error">{error}</div>}
 
       <section className="housing-summary-main">
-        <div className="housing-total-card"><span>סה״כ החזר חודשי</span><strong>{money(state.totalPayment)}</strong><small>משכנתאות + הלוואות · נתון נוכחי מהמערכת</small></div>
+        <div className="housing-total-card"><span>סה״כ החזר חודשי</span><strong>{money(state.totalPayment)}</strong><small>משכנתאות + הלוואות + התחייבויות נוספות</small></div>
         <div className="housing-two-cards">
-          <div className="housing-mini-card"><span>משכנתאות</span><strong>{money(state.mortgagePayment)}</strong></div>
-          <div className="housing-mini-card"><span>הלוואות</span><strong>{money(state.loanPayment)}</strong></div>
+          <div className="housing-mini-card"><span>משכנתאות · {grouped.mortgage.length}</span><strong>{money(state.mortgagePayment)}</strong></div>
+          <div className="housing-mini-card"><span>הלוואות · {grouped.loan.length}</span><strong>{money(state.loanPayment)}</strong></div>
+          <div className="housing-mini-card"><span>התחייבויות נוספות · {grouped.other.length}</span><strong>{money(grouped.other.reduce((s,c)=>s+Number(c.current_payment||0),0))}</strong></div>
         </div>
       </section>
 
-      <section className="housing-section-card">
-        <div className="housing-section-head"><div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל</p></div></div>
-        <div className="forecast-controls">
-          <label>תחילת התחזית<input type="month" value={forecastStart} onChange={(e) => setForecastStart(e.target.value)} /></label>
-          <label>תקופת תחזית<select value={forecastMonths} onChange={(e) => setForecastMonths(Number(e.target.value))}><option value={24}>24 חודשים</option><option value={36}>3 שנים</option><option value={60}>5 שנים</option><option value={120}>10 שנים</option><option value={240}>20 שנים</option><option value={360}>30 שנים</option></select></label>
-        </div>
-        {selectedTooltip && <div className="housing-chart-tooltip">
-          <div><strong>{monthLabel(selectedTooltip.month)}</strong></div>
-          <div>תשלום לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong></div>
-          <div>תשלום אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong></div>
-          <div>שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>
-          {selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}
-          <div className="muted">סיבה: {selectedTooltip.reason || "לא ידועה"}</div>
-        </div>}
-        <div className="housing-chart-wrap">
-          <svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
+      <nav className="housing-subtabs" aria-label="תתי עמודים בדיור ומשכנתא">
+        {[['summary','סיכום'],['mortgage','משכנתאות'],['loan','הלוואות'],['other','התחייבויות נוספות']].map(([id,label]) => (
+          <button key={id} className={housingSubTab === id ? 'housing-subtab active' : 'housing-subtab'} onClick={() => setHousingSubTab(id)}>{label}<span>{id==='summary' ? '' : ` ${grouped[id].length}`}</span></button>
+        ))}
+      </nav>
+
+      {housingSubTab === 'mortgage' && <>
+        <section className="housing-section-card"><div className="housing-section-head"><div><h3>🏠 משכנתאות</h3><p>כל מסלולי המשכנתא הקיימים במערכת.</p></div></div>{renderCommitmentCards('mortgage')}</section>
+        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📉 תחזית המשכנתאות</h3><p>התחזית מבוססת רק על הנתונים הקיימים.</p></div></div>{renderScenarioCards(grouped.mortgage)}</section>
+      </>}
+
+      {housingSubTab === 'loan' && <>
+        <section className="housing-section-card"><div className="housing-section-head"><div><h3>💳 הלוואות</h3><p>הלוואות שאינן מסלולי משכנתא.</p></div></div>{renderCommitmentCards('loan')}</section>
+        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📉 תחזית ההלוואות</h3><p>התחזית מוצגת בנפרד מהמשכנתאות.</p></div></div>{renderScenarioCards(grouped.loan)}</section>
+      </>}
+
+      {housingSubTab === 'other' && <section className="housing-section-card"><div className="housing-section-head"><div><h3>📌 התחייבויות נוספות</h3><p>התחייבויות שאינן מסווגות כמשכנתא או הלוואה.</p></div></div>{renderCommitmentCards('other')}</section>}
+
+      {housingSubTab === 'summary' && <>
+        <section className="housing-section-card">
+          <div className="housing-section-head"><div><h3>📉 החזר חודשי צפוי</h3><p>הזמן מתקדם מימין לשמאל</p></div></div>
+          <div className="forecast-controls">
+            <label>תחילת התחזית<input type="month" value={forecastStart} onChange={(e) => setForecastStart(e.target.value)} /></label>
+            <label>תקופת תחזית<select value={forecastMonths} onChange={(e) => setForecastMonths(Number(e.target.value))}><option value={24}>24 חודשים</option><option value={36}>3 שנים</option><option value={60}>5 שנים</option><option value={120}>10 שנים</option><option value={240}>20 שנים</option><option value={360}>30 שנים</option></select></label>
+          </div>
+          {selectedTooltip && <div className="housing-chart-tooltip"><div><strong>{monthLabel(selectedTooltip.month)}</strong></div><div>תשלום לפני: <strong>{selectedTooltip.beforePayment == null ? "לא ידוע" : money(selectedTooltip.beforePayment)}</strong></div><div>תשלום אחרי: <strong>{selectedTooltip.knownAfter ? money(selectedTooltip.afterPayment) : "לא ניתן לחישוב"}</strong></div><div>שינוי: <strong>{fmtDelta(selectedTooltip.delta)}</strong></div>{selectedTooltip.commitments?.length > 0 && <div>התחייבות: <strong>{selectedTooltip.commitments.map((x) => x.name).join(" · ")}</strong></div>}<div className="muted">סיבה: {selectedTooltip.reason || "לא ידועה"}</div></div>}
+          <div className="housing-chart-wrap"><svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
             {graph.segments.map((seg, idx) => { const path = seg.map((p, i) => `${i ? "L" : "M"} ${p.x} ${p.y}`).join(" "); return <path key={idx} className="housing-chart-line" d={path}/>; })}
@@ -1519,47 +1566,14 @@ function HousingForecastView({
             {graph.points.map((point) => <circle key={point.id} className="housing-chart-point change" cx={point.x} cy={point.y} r="6" onMouseEnter={() => setHoveredPoint(point)} onMouseLeave={() => setHoveredPoint(null)} onClick={() => setSelectedChange(point.id)} />)}
             {graph.rows.map((row, i) => !row.paymentKnown ? <g key={`unknown-${row.month}`}><line className="housing-chart-unknown" x1={graph.x(i)} x2={graph.x(i)} y1={graph.pad.top} y2={graph.height-graph.pad.bottom}/><circle className="housing-chart-point change" cx={graph.x(i)} cy={graph.y(row.commitments.find((x) => x.payment !== null)?.payment ?? state.totalPayment)} r="5" onMouseEnter={() => { const cp = changePoints.find((x) => x.month === row.month); if (cp) setHoveredPoint(cp); }} onMouseLeave={() => setHoveredPoint(null)} onClick={() => { const cp = changePoints.find((x) => x.month === row.month); if (cp) setSelectedChange(cp.id); }} /></g> : null)}
             {graph.rows.filter((_, i) => i === 0 || i === graph.rows.length-1 || i % Math.max(1, Math.floor(graph.rows.length/6)) === 0).map((row) => { const i = graph.rows.findIndex((x) => x.month === row.month); return <text key={row.month} className="housing-chart-label" x={graph.x(i)} y={graph.height-12} textAnchor="middle">{row.month.slice(0,4)}</text>; })}
-          </svg>
-        </div>
-        <div className="housing-legend">נקודה מסומנת = שינוי צפוי. קו מקווקו = נקודת שינוי שבה הסכום החדש אינו ניתן לחישוב מהנתונים הקיימים.</div>
-      </section>
+          </svg></div>
+          <div className="housing-legend">נקודה מסומנת = שינוי צפוי. קו מקווקו = נקודת שינוי שבה הסכום החדש אינו ניתן לחישוב מהנתונים הקיימים.</div>
+        </section>
 
-      <section className="housing-section-card">
-        <div className="housing-section-head"><div><h3>📅 השינויים הצפויים בהחזר</h3><p>רשימה כרונולוגית של נקודות שבהן התשלום משתנה או צפוי להשתנות.</p></div></div>
-        {changePoints.length ? <div className="housing-changes">{changePoints.map((cp) => <div key={cp.id} className={`housing-change-card ${selectedChange === cp.id ? "selected" : ""}`} onClick={() => setSelectedChange(cp.id)}>
-          <div className="housing-change-top"><div className="housing-change-date">{dateText(`${cp.month}-01`)}</div><div className={`housing-change-delta ${cp.delta != null && cp.delta < 0 ? "down" : cp.delta > 0 ? "up" : ""}`}>{fmtDelta(cp.delta)}</div></div>
-          <div className="housing-change-grid"><div><span>לפני</span><strong>{cp.beforePayment == null ? "לא ידוע" : money(cp.beforePayment)}</strong></div><div><span>אחרי</span><strong>{cp.knownAfter ? money(cp.afterPayment) : "לא ניתן לחישוב"}</strong></div><div><span>סטטוס</span><strong>{cp.knownAfter ? "מחושב" : "צפוי שינוי"}</strong></div></div>
-          <div className="housing-change-reason">{cp.reason || "סיבה לא ידועה"}</div>
-          {cp.commitments?.length > 0 && <div className="housing-change-commitments">{cp.commitments.map((x) => <span className="housing-change-chip" key={x.id}>{x.name}</span>)}</div>}
-        </div>)}</div> : <div className="housing-empty">לא זוהו כרגע נקודות שינוי בטווח התחזית.</div>}
-      </section>
+        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📅 השינויים הצפויים בהחזר</h3><p>רשימה כרונולוגית של נקודות שבהן התשלום משתנה או צפוי להשתנות.</p></div></div>{changePoints.length ? <div className="housing-changes">{changePoints.map((cp) => <div key={cp.id} className={`housing-change-card ${selectedChange === cp.id ? "selected" : ""}`} onClick={() => setSelectedChange(cp.id)}><div className="housing-change-top"><div className="housing-change-date">{dateText(`${cp.month}-01`)}</div><div className={`housing-change-delta ${cp.delta != null && cp.delta < 0 ? "down" : cp.delta > 0 ? "up" : ""}`}>{fmtDelta(cp.delta)}</div></div><div className="housing-change-grid"><div><span>לפני</span><strong>{cp.beforePayment == null ? "לא ידוע" : money(cp.beforePayment)}</strong></div><div><span>אחרי</span><strong>{cp.knownAfter ? money(cp.afterPayment) : "לא ניתן לחישוב"}</strong></div><div><span>סטטוס</span><strong>{cp.knownAfter ? "מחושב" : "צפוי שינוי"}</strong></div></div><div className="housing-change-reason">{cp.reason || "סיבה לא ידועה"}</div>{cp.commitments?.length > 0 && <div className="housing-change-commitments">{cp.commitments.map((x) => <span className="housing-change-chip" key={x.id}>{x.name}</span>)}</div>}</div>)}</div> : <div className="housing-empty">לא זוהו כרגע נקודות שינוי בטווח התחזית.</div>}</section>
 
-      <section className="housing-section-card">
-        <div className="housing-section-head"><div><h3>📊 יתרות לפי תאריך</h3><p>היתרה מחושבת רק כאשר קיימים מספיק נתונים לכל ההתחייבויות עד תאריך היעד.</p></div></div>
-        <div className="housing-balance-grid"><div className="housing-balance-select"><label>תאריך יעד</label><select value={balanceTarget} onChange={(e) => setBalanceTarget(e.target.value)}>{targetOptions.map((m) => <option key={m} value={m}>{dateText(`${m}-01`)}</option>)}</select></div></div>
-        {balanceAtTarget && <>
-          <div className="housing-balance-cards" style={{marginTop:12}}>
-            <div className={`housing-balance-card ${balanceAtTarget.mortgageKnown === false ? "unknown" : ""}`}><span>יתרת משכנתא צפויה</span><strong>{balanceAtTarget.mortgageKnown ? money(balanceAtTarget.mortgage) : "לא ניתן לחישוב"}</strong></div>
-            <div className={`housing-balance-card ${balanceAtTarget.loanKnown === false ? "unknown" : ""}`}><span>יתרת הלוואות צפויה</span><strong>{balanceAtTarget.loanKnown ? money(balanceAtTarget.loan) : "לא ניתן לחישוב"}</strong></div>
-            <div className={`housing-balance-card ${balanceAtTarget.known === false ? "unknown" : ""}`}><span>סה״כ חוב צפוי בתאריך</span><strong>{balanceAtTarget.known ? money(balanceAtTarget.total) : "לא ניתן לחישוב"}</strong></div>
-          </div>
-          {!balanceAtTarget.known && <div className="housing-forecast-note">אין מספיק מידע כדי לחשב יתרה מדויקת לתאריך זה. שינוי ריבית עתידי ללא ריבית חדשה ידועה מונע חישוב ודאי של ההמשך.</div>}
-        </>}
-      </section>
-
-      <section className="housing-section-card">
-        <div className="housing-section-head"><div><h3>התחייבויות</h3><p>תצוגה מצומצמת לצורך הבנת התחזית.</p></div></div>
-        <div className="housing-commitment-list">{commitments.map((c) => <div key={c.id} className="housing-commitment-card"><div className="housing-commitment-card-top"><strong>{c.name || "ללא שם"}</strong><strong>{money(c.current_payment)}</strong></div><div className="housing-commitment-card-meta">{commitmentTypeLabel(c)} · יתרה {money(c.current_balance)} · ריבית {c.interest_rate != null ? `${Number(c.interest_rate).toFixed(3)}%` : "לא ידועה"} · סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div></div>)}{!commitments.length && <div className="housing-empty">אין התחייבויות דיור במערכת.</div>}</div>
-      </section>
-
-      <section className="housing-section-card">
-        <div className="housing-section-head"><div><h3>תרחיש ריבית עתידית</h3><p>אופציונלי בלבד. הנתונים השמורים ב-Supabase אינם משתנים.</p></div></div>
-        <div className="loan-card-list">{commitments.map((loan) => { const scenario = scenarios[loan.id] || {}; return <div key={loan.id} className={`loan-card ${selectedLoan === loan.id ? "selected" : ""}`} onClick={() => setSelectedLoan(loan.id)}>
-          <div className="loan-card-top"><strong>{loan.name}</strong><strong>{money(loan.current_balance)}</strong></div>
-          <div className="loan-card-meta">{commitmentTypeLabel(loan)} · תשלום נוכחי {money(loan.current_payment)} · שינוי ריבית {loan.next_rate_change ? dateText(loan.next_rate_change) : "לא מוגדר"}</div>
-          {selectedLoan === loan.id && <div className="scenario-grid" style={{marginTop:12}} onClick={(e) => e.stopPropagation()}><label>ריבית אחרי שינוי<input type="number" min="0" max="30" step="0.01" value={scenario.rate ?? ""} onChange={(e) => updateScenario(loan.id,"rate",e.target.value)} placeholder={loan.interest_rate != null ? String(loan.interest_rate) : "לדוגמה 4.25"} /></label><label>או תשלום חודשי<input type="number" min="0" step="1" value={scenario.payment ?? ""} onChange={(e) => updateScenario(loan.id,"payment",e.target.value)} placeholder="אופציונלי" /></label></div>}
-        </div>; })}</div>
-      </section>
+        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📊 יתרות לפי תאריך</h3><p>בחרי תאריך וקבלי יתרות עתידיות לפי סוג התחייבות.</p></div></div><div className="housing-balance-grid"><div className="housing-balance-select"><label>תאריך יעד</label><select value={balanceTarget} onChange={(e) => setBalanceTarget(e.target.value)}>{targetOptions.map((m) => <option key={m} value={m}>{dateText(`${m}-01`)}</option>)}</select></div></div>{balanceAtTarget && <div className="housing-balance-cards" style={{marginTop:12}}>{[['mortgage','יתרת משכנתאות צפויה'],['loan','יתרת הלוואות צפויה'],['other','יתרת התחייבויות נוספות'],['total','סה״כ חוב צפוי בתאריך']].map(([key,label]) => <div key={key} className={`housing-balance-card ${balanceAtTarget[key].known === false ? 'unknown' : ''}`}><span>{label}</span><strong>{balanceAtTarget[key].known ? money(balanceAtTarget[key].value) : 'לא ניתן לחישוב'}</strong></div>)}</div>}</section>
+      </>}
 
       <div className="housing-forecast-note"><strong>חשוב:</strong> התחזית היא לתצוגה בלבד. היא אינה יוצרת טרנזקציות, הוצאות או הכנסות ואינה משנה את התקציב או נתונים ב-Supabase. כאשר נתון עתידי חסר, המערכת מציגה במפורש שלא ניתן לחשב את הסכום.</div>
     </section>
