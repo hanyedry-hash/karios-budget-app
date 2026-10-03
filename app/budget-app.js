@@ -140,6 +140,216 @@ const commitmentTypeValue = (c) => {
   return "loan";
 };
 const commitmentTypeLabel = (c) => ({ mortgage: "משכנתא", loan: "הלוואה", other: "התחייבות נוספת" }[commitmentTypeValue(c)] || "התחייבות נוספת");
+
+// נתוני דיור שהוזנו ידנית מתוך המסמכים שסופקו.
+// המקור הוא מסמך המשכנתאות של בנק הפועלים מיום 03/10/2026
+// וצילום מסך של שתי ההלוואות מיום 01/10/2026.
+// אין כאן השלמה של נתונים שלא הופיעו במקורות.
+const MANUAL_HOUSING_COMMITMENTS = [
+  // משכנתאות – 10 קבוצות/הלוואות כפי שמופיעות בסיכום הבנק.
+  // current_balance = יתרה משוערת: קרן + הצמדות/ריבית שנצברו, ללא עמלת פירעון מוקדם.
+  {
+    id: "mortgage-61-11-425920-551",
+    name: "מסלול 61/11/425920/551",
+    loan_number: "61/11/425920/551",
+    commitment_type: "mortgage",
+    current_balance: 402596.68,
+    liquidation_balance: 401499.78,
+    current_payment: 2008.82,
+    interest_rate: 3.98,
+    rate_formula: "F + 0.60%",
+    rate_type: "משתנה",
+    indexation: "לא צמוד",
+    end_date: "2055-01-10",
+    next_rate_change: "2028-01-10",
+    rate_change_months: 18,
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-62-00-300948-148",
+    name: "מסלול 62/00/300948/148",
+    loan_number: "62/00/300948/148",
+    commitment_type: "mortgage",
+    current_balance: 1703.38,
+    liquidation_balance: 1408.36,
+    current_payment: 847.24,
+    interest_rate: 0.816,
+    rate_type: "קבועה",
+    indexation: "מדד המחירים לצרכן",
+    end_date: "2026-11-10",
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-62-00-415488-443",
+    name: "מסלול 62/00/415488/443",
+    loan_number: "62/00/415488/443",
+    commitment_type: "mortgage",
+    current_balance: 188683.58,
+    liquidation_balance: 172535.68,
+    current_payment: 836.00,
+    interest_rate: 2.91,
+    rate_type: "קבועה",
+    indexation: "מדד המחירים לצרכן",
+    end_date: "2053-08-10",
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-62-10-300948-246",
+    name: "מסלול 62/10/300948/246",
+    loan_number: "62/10/300948/246",
+    commitment_type: "mortgage",
+    current_balance: 152382.80,
+    liquidation_balance: 151988.05,
+    current_payment: 960.49,
+    interest_rate: 3.95,
+    rate_formula: "P - 0.80%",
+    rate_type: "משתנה",
+    indexation: "לא צמוד",
+    end_date: "2045-12-10",
+    next_rate_change: "2026-10-10",
+    rate_change_months: 1,
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-62-10-415488-244",
+    name: "מסלול 62/10/415488/244",
+    loan_number: "62/10/415488/244",
+    commitment_type: "mortgage",
+    current_balance: 172378.60,
+    liquidation_balance: 171898.23,
+    current_payment: 918.92,
+    interest_rate: 4.25,
+    rate_formula: "P - 0.50%",
+    rate_type: "משתנה",
+    indexation: "לא צמוד",
+    end_date: "2053-08-10",
+    next_rate_change: "2026-10-10",
+    rate_change_months: 1,
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-62-10-425920-650",
+    name: "מסלול 62/10/425920/650",
+    loan_number: "62/10/425920/650",
+    commitment_type: "mortgage",
+    current_balance: 195263.26,
+    liquidation_balance: 194744.65,
+    current_payment: 993.37,
+    interest_rate: 4.05,
+    rate_formula: "P - 0.70%",
+    rate_type: "משתנה",
+    indexation: "לא צמוד",
+    end_date: "2054-10-10",
+    next_rate_change: "2026-10-10",
+    rate_change_months: 1,
+    as_of_date: "2026-10-03",
+    tracks: [
+      { component: "201", original_amount: 135000, end_date: "2054-10-10", next_rate_change: "2026-10-10", interest_rate: 4.05 },
+      { component: "202", original_amount: 65000, end_date: "2055-04-10", next_rate_change: "2026-10-10", interest_rate: 4.05 },
+    ],
+  },
+  {
+    id: "mortgage-62-42-425920-445",
+    name: "מסלול 62/42/425920/445",
+    loan_number: "62/42/425920/445",
+    commitment_type: "mortgage",
+    current_balance: 346424.55,
+    liquidation_balance: 345370.91,
+    current_payment: 2949.63,
+    interest_rate: 4.65,
+    rate_type: "קבועה",
+    indexation: "לא צמוד",
+    end_date: "2039-09-10",
+    as_of_date: "2026-10-03",
+    tracks: [
+      { component: "201", original_amount: 303500, end_date: "2039-09-10", interest_rate: 4.65 },
+      { component: "202", original_amount: 78500, end_date: "2039-10-10", interest_rate: 4.60 },
+    ],
+  },
+  {
+    id: "mortgage-62-59-415488-519",
+    name: "מסלול 62/59/415488/519",
+    loan_number: "62/59/415488/519",
+    commitment_type: "mortgage",
+    current_balance: 176867.94,
+    liquidation_balance: 176276.81,
+    current_payment: 1004.46,
+    interest_rate: 5.10,
+    rate_formula: "F + 1.33%",
+    rate_type: "משתנה",
+    indexation: "לא צמוד",
+    end_date: "2053-08-10",
+    next_rate_change: "2028-08-10",
+    rate_change_months: 60,
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-62-79-300948-321",
+    name: "מסלול 62/79/300948/321",
+    loan_number: "62/79/300948/321",
+    commitment_type: "mortgage",
+    current_balance: 180897.80,
+    liquidation_balance: 149255.35,
+    current_payment: 1113.80,
+    interest_rate: 4.00,
+    rate_formula: "V + 2.00%",
+    rate_type: "משתנה",
+    indexation: "מדד המחירים לצרכן",
+    end_date: "2045-12-10",
+    next_rate_change: "2030-12-10",
+    rate_change_months: 60,
+    as_of_date: "2026-10-03",
+  },
+  {
+    id: "mortgage-63-02-425920-744",
+    name: "מסלול 63/02/425920/744",
+    loan_number: "63/02/425920/744",
+    commitment_type: "mortgage",
+    current_balance: 107022.89,
+    liquidation_balance: 103417.34,
+    current_payment: 500.91,
+    interest_rate: 3.65,
+    rate_formula: "H + 1.65%",
+    rate_type: "משתנה",
+    indexation: "מדד המחירים לצרכן",
+    end_date: "2055-04-10",
+    next_rate_change: "2028-04-10",
+    rate_change_months: 36,
+    as_of_date: "2026-10-03",
+    tracks: [
+      { component: "201", original_amount: 35650, end_date: "2055-04-10", next_rate_change: "2028-04-10", interest_rate: 3.65 },
+      { component: "202", original_amount: 70000, end_date: "2055-09-10", next_rate_change: "2028-09-10", interest_rate: 3.78 },
+    ],
+  },
+
+  // הלוואות – נתונים שנקלטו ידנית מצילום המסך.
+  {
+    id: "loan-manual-01",
+    name: "הלוואה 1 – 40,000 ₪",
+    loan_number: "loan-01",
+    commitment_type: "loan",
+    original_amount: 40000,
+    current_balance: 24000,
+    current_payment: 1000,
+    end_date: "2028-09-02",
+    interest_rate: 0,
+    indexation: "לא צמוד",
+    as_of_date: "2026-10-01",
+  },
+  {
+    id: "loan-manual-02",
+    name: "הלוואה 2 – 133,000 ₪",
+    loan_number: "loan-02",
+    commitment_type: "loan",
+    original_amount: 133000,
+    current_balance: 128384.24,
+    current_payment: 1886.62,
+    end_date: "2033-05-10",
+    interest_rate: 5.75,
+    indexation: "לא צמוד",
+    as_of_date: "2026-10-01",
+  },
+];
 const commitmentTypePlural = (type) => ({ mortgage: "משכנתאות", loan: "הלוואות", other: "התחייבויות נוספות" }[type] || "התחייבויות");
 const scenarioNumber = (v) => v === "" || v == null || !Number.isFinite(toMoneyNumber(v)) ? null : toMoneyNumber(v);
 
@@ -432,26 +642,18 @@ export default function BudgetApp() {
           .eq("is_active", true)
           .order("day_of_month")
           .order("name"),
-        supabase
-          .from("housing_commitments")
-          .select("*")
-          .eq("household_id", householdId)
-          .order("end_date", { ascending: true, nullsFirst: false })
-          .order("name"),
       ]);
 
       if (m.error) console.error(m.error);
       if (c.error) console.error(c.error);
       if (t.error) console.error(t.error);
       if (r.error) console.error(r.error);
-      if (housing.error) {
-        console.error(housing.error);
-        setHousingCommitments([]);
-        setHousingError("לא ניתן לטעון כרגע את נתוני המשכנתאות.");
-      } else {
-        setHousingCommitments(housing.data || []);
-        setHousingError("");
-      }
+
+      // בשלב זה נתוני הדיור נטענים מהסט הקבוע שהוזן ידנית מתוך
+      // מסמך המשכנתאות וצילום מסך ההלוואות. שאר האפליקציה ממשיכה
+      // להיטען כרגיל מ-Supabase.
+      setHousingCommitments(MANUAL_HOUSING_COMMITMENTS);
+      setHousingError("");
 
       const members = m.data || [];
       setProfiles(
