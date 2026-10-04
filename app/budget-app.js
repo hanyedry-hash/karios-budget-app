@@ -2040,7 +2040,7 @@ function HousingForecastView({
 
       <nav className="housing-subtabs" aria-label="תתי עמודים בדיור ומשכנתא">
         {[['summary','סיכום'],['mortgage','משכנתאות'],['loan','הלוואות'],['other','התחייבויות נוספות'],['forecast','תחזית']].map(([id,label]) => (
-          <button key={id} className={housingSubTab === id ? 'housing-subtab active' : 'housing-subtab'} onClick={() => setHousingSubTab(id)}>{label}<span>{id==='summary' ? '' : ` ${grouped[id].length}`}</span></button>
+          <button key={id} className={housingSubTab === id ? 'housing-subtab active' : 'housing-subtab'} onClick={() => setHousingSubTab(id)}>{label}<span>{id==='summary' || id==='forecast' ? '' : ` ${grouped[id].length}`}</span></button>
         ))}
       </nav>
 
