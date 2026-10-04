@@ -54,44 +54,6 @@ const normalizeDateMonth = (v) => {
 const monthlyRate = (annualRate) =>
   Number(annualRate || 0) / 100 / 12;
 
-const annuityPayment = (principal, annualRate, nMonths) => {
-  const p = Math.max(0, Number(principal || 0));
-  const n = Math.max(1, Math.round(Number(nMonths || 1)));
-  const r = monthlyRate(annualRate);
-
-  if (p <= 0) return 0;
-  if (Math.abs(r) < 1e-12) return p / n;
-
-  return (p * r) / (1 - Math.pow(1 + r, -n));
-};
-
-const monthsRemaining = (endDate, month) => {
-  if (!endDate) return 360;
-  const endMonth = normalizeDateMonth(endDate);
-  return Math.max(1, monthsBetween(month, endMonth) + 1);
-};
-
-const calculateMonthlyPayment = (principal, annualRate, nMonths) => {
-  const p = Math.max(0, Number(principal || 0));
-  const n = Math.max(1, Math.round(Number(nMonths || 1)));
-  const r = monthlyRate(annualRate);
-  if (p <= 0) return 0;
-  if (Math.abs(r) < 1e-12) return p / n;
-  return (p * r) / (1 - Math.pow(1 + r, -n));
-};
-
-const calculateFutureBalance = (principal, annualRate, payment, months) => {
-  let balance = Math.max(0, Number(principal || 0));
-  const rate = monthlyRate(annualRate);
-  const pmt = Math.max(0, Number(payment || 0));
-  for (let i = 0; i < Math.max(0, Math.round(Number(months || 0))) && balance > 0.01; i++) {
-    const interest = balance * rate;
-    const actualPayment = Math.min(pmt, balance + interest);
-    balance = Math.max(0, balance - Math.max(0, actualPayment - interest));
-  }
-  return balance;
-};
-
 const toMoneyNumber = (v) => {
   if (v === null || v === undefined || v === "") return 0;
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
@@ -358,117 +320,45 @@ const fmtDelta = (value) => {
   if (Math.abs(n) < 0.5) return "ללא שינוי";
   return `${n > 0 ? "+" : ""}${money(n)}`;
 };
-const scenarioNumber = (v) => v === "" || v == null || !Number.isFinite(toMoneyNumber(v)) ? null : toMoneyNumber(v);
 
-function forecastCommitment(c, startMonth, months, scenario = {}) {
-  const n = Math.min(Math.max(Number(months || 1), 1), 360);
-  const startBalance = Math.max(0, commitmentBalance(c));
-  const currentPayment = Math.max(0, commitmentPayment(c));
-  const currentRateRaw = Number(c.interest_rate);
-  const currentRate = Number.isFinite(currentRateRaw) ? currentRateRaw : null;
-  const endMonth = normalizeDateMonth(c.end_date);
-  const changeMonth = normalizeDateMonth(c.next_rate_change);
-  const scenarioRate = scenarioNumber(scenario.rate);
-  const paymentOverride = scenarioNumber(scenario.payment);
-  const rows = [];
-  let balance = startBalance;
-  let balanceKnown = true;
-  let activeRate = currentRate;
-
-  for (let i = 0; i < n; i++) {
-    const month = shiftMonth(startMonth, i);
-    if ((endMonth && month > endMonth) || balance <= 0.01) {
-      rows.push({ month, payment: 0, balance: 0, paymentKnown: true, balanceKnown: true, reason: "סיום התחייבות" });
-      balance = 0;
-      balanceKnown = true;
-      continue;
-    }
-    // The current month represents the payment that is actually in force today.
-    // A rate-change date that falls inside the current month becomes a forecast
-    // change point, but must not erase the current payment from the graph.
-    const changeExpected = Boolean(changeMonth && month > startMonth && month >= changeMonth);
-    if (changeExpected && scenarioRate !== null) activeRate = scenarioRate;
-
-    let payment = null;
-    let paymentKnown = true;
-    let thisBalanceKnown = balanceKnown;
-    let reason = "";
-
-    if (changeExpected && scenarioRate === null && paymentOverride === null) {
-      paymentKnown = false;
-      thisBalanceKnown = false;
-      balanceKnown = false;
-      reason = "צפוי שינוי ריבית; הריבית העתידית אינה ידועה";
-    } else if (changeExpected && scenarioRate !== null) {
-      payment = calculateMonthlyPayment(balance, activeRate, monthsRemaining(endMonth, month));
-      reason = "שינוי ריבית לפי תרחיש";
-    } else if (changeExpected && paymentOverride !== null) {
-      payment = paymentOverride;
-      reason = "תרחיש תשלום חודשי";
-      if (activeRate === null || !balanceKnown) thisBalanceKnown = false;
-    } else if (currentPayment > 0) {
-      payment = currentPayment;
-    } else if (activeRate !== null && endMonth) {
-      payment = calculateMonthlyPayment(balance, activeRate, monthsRemaining(endMonth, month));
-      reason = "חושב לפי יתרה, ריבית ותקופה שנותרה";
-    } else {
-      paymentKnown = false;
-      thisBalanceKnown = false;
-      reason = "אין מספיק נתונים לחישוב ההחזר";
-    }
-
-    if (thisBalanceKnown && payment !== null && activeRate !== null) {
-      const interest = balance * monthlyRate(activeRate);
-      const actualPayment = Math.min(Math.max(0, payment), balance + interest);
-      balance = Math.max(0, balance - Math.max(0, actualPayment - interest));
-      if (endMonth && month === endMonth) balance = 0;
-    } else if (thisBalanceKnown && payment === null) {
-      thisBalanceKnown = false;
-      balanceKnown = false;
-    }
-
-    rows.push({ month, payment, balance: thisBalanceKnown ? balance : null, paymentKnown, balanceKnown: thisBalanceKnown, reason, rate: activeRate });
-  }
-  return { commitment: c, type: commitmentTypeValue(c), rows };
-}
-
-function calculateCommitmentAtTarget(c, startMonth, targetMonth) {
+function calculateCommitmentAtTarget(c, startMonth, targetDate) {
   const start = normalizeDateMonth(startMonth);
-  const target = normalizeDateMonth(targetMonth);
-  const endMonth = normalizeDateMonth(c?.end_date);
+  const targetKey = String(targetDate || "").slice(0, 10);
+  const targetMonth = normalizeDateMonth(targetKey);
+  const endKey = c?.end_date ? String(c.end_date).slice(0, 10) : "";
+  const endMonth = normalizeDateMonth(endKey);
   const startBalance = commitmentBalance(c);
   const currentPayment = commitmentPayment(c);
   const rateRaw = Number(c?.interest_rate);
   const annualRate = Number.isFinite(rateRaw) ? rateRaw : 0;
 
-  if (!start || !target || target < start) return null;
+  if (!start || !targetKey || !targetMonth || targetMonth < start) return null;
+  if (start === targetMonth && targetKey < todayKey()) {
+    return { balance: startBalance, payment: currentPayment, active: true, months: 0 };
+  }
   if (startBalance <= 0) {
     return { balance: 0, payment: 0, active: false, months: 0 };
   }
-  // אם היעד נמצא אחרי חודש הסיום, המסלול כבר סולק.
-  // אם היעד הוא בתוך חודש הסיום, למשל 01.10 כאשר הסיום הוא 10.10,
-  // המסלול עדיין פעיל ולכן אין לאפס אותו.
-  if (endMonth && target > endMonth) {
+
+  // If the selected date is on/after the exact contractual end date,
+  // the commitment is considered finished on that date.
+  if (endKey && targetKey >= endKey) {
     return { balance: 0, payment: 0, active: false, months: Math.max(0, monthsBetween(start, endMonth)) };
   }
 
-  const months = Math.max(0, monthsBetween(start, target));
+  const months = Math.max(0, monthsBetween(start, targetMonth));
   let balance = startBalance;
   const rate = monthlyRate(annualRate);
 
-  // תחזית לפי המצב הקיים בלבד: משתמשים בריבית ובהחזר הנוכחיים לאורך כל הדרך.
-  // next_rate_change / scenarios אינם משתתפים בחישוב הזה.
+  // Estimate using only the current state: current balance, current rate,
+  // current payment and the known end date. Future rate changes are ignored.
   for (let i = 0; i < months && balance > 0.01; i++) {
     const month = shiftMonth(start, i);
-    if (endMonth && month >= endMonth) {
-      break;
-    }
+    if (endMonth && month >= endMonth) break;
     const interest = balance * rate;
     const payment = Math.min(currentPayment, balance + interest);
     balance = Math.max(0, balance - Math.max(0, payment - interest));
   }
-
-  if (endMonth && target > endMonth) balance = 0;
 
   return {
     balance,
@@ -500,35 +390,6 @@ function calculateHousingAtTarget(commitments, startMonth, targetMonth) {
     totalBalance: rows.reduce((sum, x) => sum + Number(x.result?.balance || 0), 0),
     totalPayment: rows.reduce((sum, x) => sum + Number(x.result?.payment || 0), 0),
   };
-}
-
-function calculateHousingForecast(commitments, startMonth, months, scenarios = {}) {
-  const n = Math.min(Math.max(Number(months || 1), 1), 360);
-  const perCommitment = (commitments || []).map((c) => forecastCommitment(c, startMonth, n, scenarios?.[c.id] || {}));
-  const byMonth = Array.from({ length: n }, (_, i) => {
-    const month = shiftMonth(startMonth, i);
-    const rows = perCommitment.map((x) => x.rows[i]);
-    const paymentKnown = rows.every((r) => r?.paymentKnown !== false);
-    const balanceKnown = rows.every((r) => r?.balanceKnown !== false);
-    return {
-      month,
-      payment: paymentKnown ? rows.reduce((s, r) => s + Number(r?.payment || 0), 0) : null,
-      balance: balanceKnown ? rows.reduce((s, r) => s + Number(r?.balance || 0), 0) : null,
-      paymentKnown,
-      balanceKnown,
-      commitments: rows.map((r, idx) => ({
-        id: perCommitment[idx].commitment.id,
-        name: perCommitment[idx].commitment.name,
-        type: perCommitment[idx].type,
-        payment: r?.payment ?? null,
-        balance: r?.balance ?? null,
-        paymentKnown: r?.paymentKnown !== false,
-        balanceKnown: r?.balanceKnown !== false,
-        reason: r?.reason || "",
-      })),
-    };
-  });
-  return { perCommitment, byMonth };
 }
 
 const compareCommitmentEndDate = (a, b) => {
@@ -563,131 +424,6 @@ const calculateCurrentHousingState = (commitments) => {
     totalBalance: sumBalance(rows),
   };
 };
-
-function findPaymentChangePoints(forecast) {
-  const rows = forecast?.byMonth || [];
-  const perCommitment = forecast?.perCommitment || [];
-  if (!rows.length) return [];
-
-  const firstMonth = rows[0].month;
-  const lastMonth = rows[rows.length - 1].month;
-  const today = new Date();
-  const todayDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const eventMap = new Map();
-  const addEvent = (event) => {
-    if (!event?.month) return;
-    const key = event.date || `${event.month}-01`;
-    const existing = eventMap.get(key);
-    eventMap.set(key, {
-      ...(existing || {}),
-      ...event,
-      commitments: [...new Map([...(existing?.commitments || []), ...(event.commitments || [])].map((x) => [x.id, x])).values()],
-    });
-  };
-
-  perCommitment.forEach((item) => {
-    const c = item.commitment || {};
-    const commitmentRows = item.rows || [];
-    const rateChangeRaw = c.next_rate_change;
-    const rateChangeMonth = normalizeDateMonth(rateChangeRaw);
-    const rateChangeDate = rateChangeRaw ? String(rateChangeRaw).slice(0, 10) : "";
-    if (rateChangeMonth && rateChangeMonth >= firstMonth && rateChangeMonth <= lastMonth) {
-      const eventDateObj = rateChangeDate ? new Date(`${rateChangeDate}T00:00:00`) : new Date(`${rateChangeMonth}-01T00:00:00`);
-      if (eventDateObj > todayDate) {
-        const idx = rows.findIndex((r) => r.month === rateChangeMonth);
-        const beforeRow = idx > 0 ? rows[idx - 1] : rows[0];
-        const currentRow = idx >= 0 ? rows[idx] : rows[0];
-        const commitmentRow = idx >= 0 ? commitmentRows[idx] : commitmentRows[0];
-        addEvent({
-          month: rateChangeMonth,
-          date: rateChangeDate || `${rateChangeMonth}-01`,
-          beforePayment: beforeRow?.paymentKnown ? Number(beforeRow.payment || 0) : Number(rows[0]?.payment || 0),
-          afterPayment: null,
-          delta: null,
-          knownAfter: false,
-          commitments: [{
-            id: c.id,
-            name: c.name,
-            type: item.type,
-            payment: commitmentRow?.payment ?? null,
-            paymentKnown: false,
-            reason: "מועד שינוי ריבית; הריבית העתידית אינה ידועה",
-          }],
-          reason: "מועד שינוי ריבית; הריבית העתידית אינה ידועה",
-        });
-      }
-    }
-
-    const endMonth = normalizeDateMonth(c.end_date);
-    if (endMonth) {
-      const stopMonth = shiftMonth(endMonth, 1);
-      if (stopMonth >= firstMonth && stopMonth <= lastMonth) {
-        const idx = rows.findIndex((r) => r.month === stopMonth);
-        if (idx > 0) {
-          const before = rows[idx - 1];
-          const cur = rows[idx];
-          addEvent({
-            month: stopMonth,
-            date: `${stopMonth}-01`,
-            beforePayment: before?.paymentKnown ? Number(before.payment || 0) : null,
-            afterPayment: cur?.paymentKnown ? Number(cur.payment || 0) : 0,
-            delta: before?.paymentKnown && cur?.paymentKnown ? Number(cur.payment || 0) - Number(before.payment || 0) : null,
-            knownAfter: cur?.paymentKnown === true,
-            commitments: [{
-              id: c.id,
-              name: c.name,
-              type: item.type,
-              payment: cur?.payment ?? 0,
-              paymentKnown: cur?.paymentKnown !== false,
-              reason: "התחייבות הסתיימה",
-            }],
-            reason: "התחייבות הסתיימה",
-          });
-        }
-      }
-    }
-  });
-
-  // Calculated payment changes that are not explained by a stored event date.
-  for (let i = 1; i < rows.length; i++) {
-    const prev = rows[i - 1];
-    const cur = rows[i];
-    if (prev.paymentKnown && cur.paymentKnown && Math.abs(Number(cur.payment || 0) - Number(prev.payment || 0)) >= 1) {
-      const changedCommitments = perCommitment.map((item) => {
-        const before = item.rows?.[i - 1];
-        const current = item.rows?.[i];
-        if (!before || !current) return null;
-        if (!before.paymentKnown || !current.paymentKnown) return null;
-        if (Math.abs(Number(current.payment || 0) - Number(before.payment || 0)) < 1) return null;
-        return {
-          id: item.commitment.id,
-          name: item.commitment.name,
-          type: item.type,
-          payment: current.payment,
-          paymentKnown: true,
-          reason: current.reason || "שינוי בתשלום",
-        };
-      }).filter(Boolean);
-      addEvent({
-        month: cur.month,
-        date: `${cur.month}-01`,
-        beforePayment: Number(prev.payment || 0),
-        afterPayment: Number(cur.payment || 0),
-        delta: Number(cur.payment || 0) - Number(prev.payment || 0),
-        knownAfter: true,
-        commitments: changedCommitments,
-        reason: changedCommitments.map((x) => x.reason).filter(Boolean).join(" · ") || "שינוי בתשלום",
-      });
-    }
-  }
-
-  return [...eventMap.values()]
-    .sort((a, b) => String(a.date).localeCompare(String(b.date)))
-    .map((point, index) => ({ ...point, id: `${point.date}-${index}` }));
-}
-
-const buildHousingForecast = (commitments, startMonth, months, scenarios) =>
-  calculateHousingForecast(commitments, startMonth, months, scenarios);
 
 const emptyTx = () => ({
   description: "",
@@ -760,10 +496,6 @@ export default function BudgetApp() {
 
   const [housingCommitments, setHousingCommitments] = useState([]);
   const [housingError, setHousingError] = useState("");
-  const [forecastMonths, setForecastMonths] = useState(360);
-  const [forecastStart, setForecastStart] = useState(monthKey());
-  const [housingScenarios, setHousingScenarios] = useState({});
-  const [selectedHousingLoan, setSelectedHousingLoan] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -808,7 +540,7 @@ export default function BudgetApp() {
       const householdId = hr.household_id;
       setHousehold({ id: householdId, name: hr.household_name });
 
-      const [m, c, t, r, housing] = await Promise.all([
+      const [m, c, t, r] = await Promise.all([
         supabase.rpc("get_my_household_members"),
         supabase.from("categories").select("*").eq("household_id", householdId).order("name"),
         supabase
@@ -1364,21 +1096,6 @@ export default function BudgetApp() {
     [housingCommitments]
   );
 
-  const housingForecast = useMemo(
-    () => calculateHousingForecast(
-      housingCommitments,
-      forecastStart || monthKey(),
-      forecastMonths,
-      housingScenarios
-    ),
-    [housingCommitments, forecastStart, forecastMonths, housingScenarios]
-  );
-
-  const housingChangePoints = useMemo(
-    () => findPaymentChangePoints(housingForecast),
-    [housingForecast]
-  );
-
   const typeChart = [
     { label: "קבועות", value: fixedActual },
     { label: "משתנות", value: variableActual },
@@ -1466,31 +1183,6 @@ export default function BudgetApp() {
             <Stat title="יתרה" value={money(actualIncome - actualExpenses)} tone={actualIncome - actualExpenses >= 0 ? "positive" : "negative"} />
             <Stat title="קבועות מתוכננות" value={money(plannedFixed)} subtitle={`${pendingRecurring.length} ממתינות לחיוב`} />
           </section>
-
-          <div className="housing-dashboard-card">
-            <div>
-              <div className="eyebrow">משכנתאות והתחייבויות</div>
-              <h2>תחזית התשלום החודשי</h2>
-              <p>
-                עכשיו: {money(housingState.totalPayment)} · יתרת חוב: {money(housingState.totalBalance)}
-              </p>
-            </div>
-
-            <div className="housing-dashboard-stats">
-              <div>
-                <span>יתרה</span>
-                <strong>{money(housingState.totalBalance)}</strong>
-              </div>
-              <div>
-                <span>סוף התחזית</span>
-                <strong>{money(housingForecast.byMonth[housingForecast.byMonth.length - 1]?.payment || 0)}</strong>
-              </div>
-            </div>
-
-            <button className="primary" onClick={() => setTab("housing")}>
-              לתחזית המלאה
-            </button>
-          </div>
 
           <div className="two-columns">
             <Panel title="קבועות מול משתנות">
@@ -1604,16 +1296,6 @@ export default function BudgetApp() {
           commitments={housingCommitments}
           error={housingError}
           state={housingState}
-          forecast={housingForecast}
-          changePoints={housingChangePoints}
-          forecastMonths={forecastMonths}
-          setForecastMonths={setForecastMonths}
-          forecastStart={forecastStart}
-          setForecastStart={setForecastStart}
-          scenarios={housingScenarios}
-          setScenarios={setHousingScenarios}
-          selectedLoan={selectedHousingLoan}
-          setSelectedLoan={setSelectedHousingLoan}
           onRefresh={refresh}
         />
       )}
@@ -1833,23 +1515,13 @@ function HousingForecastView({
   commitments,
   error,
   state,
-  forecast,
-  changePoints,
-  forecastMonths,
-  setForecastMonths,
-  forecastStart,
-  setForecastStart,
-  scenarios,
-  setScenarios,
-  selectedLoan,
-  setSelectedLoan,
   onRefresh,
 }) {
-  const [selectedChange, setSelectedChange] = useState(null);
-  const [balanceTarget, setBalanceTarget] = useState("");
+  const [balanceTarget, setBalanceTarget] = useState(todayKey());
   const [hoveredPoint, setHoveredPoint] = useState(null);
   const [housingSubTab, setHousingSubTab] = useState("summary");
   const todayMonth = monthKey();
+  const housingAsOfMonth = todayMonth;
 
   const grouped = useMemo(() => ({
     mortgage: sortCommitmentsByEndDate((commitments || []).filter((c) => commitmentTypeValue(c) === "mortgage")),
@@ -1857,33 +1529,10 @@ function HousingForecastView({
     other: sortCommitmentsByEndDate((commitments || []).filter((c) => commitmentTypeValue(c) === "other")),
   }), [commitments]);
 
-  const targetOptions = useMemo(() => {
-    const dates = new Set([todayMonth]);
-    // Useful future checkpoints are generated only when they are within the
-    // forecast horizon or before the latest known commitment end date. They are
-    // display checkpoints, not new financial data.
-    const latestKnownEnds = (commitments || [])
-      .map((c) => normalizeDateMonth(c.end_date))
-      .filter(Boolean)
-      .sort();
-    const latestKnownEnd = latestKnownEnds.length ? latestKnownEnds[latestKnownEnds.length - 1] : "2050-12";
-    ["2026-12", "2030-12", "2035-12", "2040-12", "2045-12", "2050-12"].forEach((m) => {
-      if (m >= todayMonth && m <= latestKnownEnd) dates.add(m);
-    });
-    (commitments || []).forEach((c) => {
-      if (c.end_date) dates.add(normalizeDateMonth(c.end_date));
-    });
-    return [...dates].filter(Boolean).sort().filter((m) => monthsBetween(todayMonth, m) >= 0);
-  }, [commitments, todayMonth]);
-
-  useEffect(() => {
-    if (!balanceTarget || !targetOptions.includes(balanceTarget)) setBalanceTarget(targetOptions[0] || todayMonth);
-  }, [balanceTarget, targetOptions, todayMonth]);
-
   const targetCalculation = useMemo(() => {
     if (!balanceTarget) return null;
-    return calculateHousingAtTarget(commitments, forecastStart, balanceTarget);
-  }, [balanceTarget, commitments, forecastStart]);
+    return calculateHousingAtTarget(commitments, housingAsOfMonth, balanceTarget);
+  }, [balanceTarget, commitments, housingAsOfMonth]);
 
   const balanceAtTarget = useMemo(() => {
     if (!targetCalculation) return null;
@@ -2060,7 +1709,7 @@ function HousingForecastView({
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
             {graph.points.length > 1 && graph.points.slice(0, -1).map((point, idx) => { const next = graph.points[idx + 1]; return <line key={`segment-${point.date}`} className="housing-chart-line" x1={point.x} y1={point.y} x2={next.x} y2={next.y} />; })}
-            {graph.points.map((point, idx) => { const cp = point.cp; const isToday = idx === 0; return <g key={point.date}><circle className={`housing-chart-point ${isToday ? "today" : "change"}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6} onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)} onClick={() => cp && setSelectedChange(cp.id)} /><text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : new Date(`${point.date}T00:00:00`).getFullYear()}</text></g>; })}
+            {graph.points.map((point, idx) => { const cp = point.cp; const isToday = idx === 0; return <g key={point.date}><circle className={`housing-chart-point ${isToday ? "today" : "change"}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6} onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)} /><text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : new Date(`${point.date}T00:00:00`).getFullYear()}</text></g>; })}
           </svg></div>
           <div className="housing-legend">כל נקודה בגרף מייצגת את היום או תאריך סיום של התחייבות. החישוב מבוסס על המצב הקיים בלבד: בכל תאריך סיום יורד ההחזר החודשי של ההתחייבות שהסתיימה. הזמן מתקדם מימין לשמאל.</div>
         </section>
@@ -2073,7 +1722,7 @@ function HousingForecastView({
         <div className="housing-balance-grid">
           <div className="housing-balance-select">
             <label>תאריך יעד</label>
-            <input type="date" value={balanceTarget ? `${balanceTarget}-01` : ""} onChange={(e) => setBalanceTarget(String(e.target.value || '').slice(0, 7))} />
+            <input type="date" min={todayKey()} value={balanceTarget} onChange={(e) => setBalanceTarget(e.target.value || todayKey())} />
           </div>
         </div>
         {balanceAtTarget && <>
@@ -2094,7 +1743,7 @@ function HousingForecastView({
   );
 }
 
-function Stat({ title, value, subtitle, tone = "" }) {
+function Stat({ title, value, subtitle = "", tone = "" }) {
   return <div className="stat"><span>{title}</span><strong className={tone}>{value}</strong>{subtitle && <small>{subtitle}</small>}</div>;
 }
 
