@@ -351,6 +351,13 @@ const MANUAL_HOUSING_COMMITMENTS = [
   },
 ];
 const commitmentTypePlural = (type) => ({ mortgage: "משכנתאות", loan: "הלוואות", other: "התחייבויות נוספות" }[type] || "התחייבויות");
+
+const fmtDelta = (value) => {
+  if (value === null || value === undefined || !Number.isFinite(Number(value))) return "לא ניתן לחישוב";
+  const n = Number(value);
+  if (Math.abs(n) < 0.5) return "ללא שינוי";
+  return `${n > 0 ? "+" : ""}${money(n)}`;
+};
 const scenarioNumber = (v) => v === "" || v == null || !Number.isFinite(toMoneyNumber(v)) ? null : toMoneyNumber(v);
 
 function forecastCommitment(c, startMonth, months, scenario = {}) {
@@ -1865,7 +1872,6 @@ function HousingForecastView({
     });
     (commitments || []).forEach((c) => {
       if (c.end_date) dates.add(normalizeDateMonth(c.end_date));
-      if (c.next_rate_change) dates.add(normalizeDateMonth(c.next_rate_change));
     });
     return [...dates].filter(Boolean).sort().filter((m) => monthsBetween(todayMonth, m) >= 0);
   }, [commitments, todayMonth]);
@@ -1909,15 +1915,6 @@ function HousingForecastView({
     ))}</div>;
   };
 
-  const renderScenarioCards = (rows) => {
-    if (!rows.length) return <div className="housing-empty">אין נתונים להצגה.</div>;
-    return <div className="housing-commitment-list">{rows.map((c) => (
-      <div className="housing-commitment-card" key={`scenario-${c.id}`}>
-        <div className="housing-commitment-card-top"><strong>{c.name}</strong><strong>{money(commitmentPayment(c))}</strong></div>
-        <div className="housing-commitment-card-meta">מצב קיים בלבד · תאריך סיום {c.end_date ? dateText(c.end_date) : "לא ידוע"}</div>
-      </div>
-    ))}</div>;
-  };
 
   const graph = useMemo(() => {
     // גרף הסיכום מבוסס אך ורק על המצב הקיים:
@@ -2027,7 +2024,7 @@ function HousingForecastView({
   return (
     <section className="panel housing-panel">
       <div className="panel-head">
-        <div><h2>🏠 דיור ומשכנתא</h2><p>מצב קיים, תחזית, שינויים עתידיים ויתרות לפי תאריך.</p></div>
+        <div><h2>🏠 דיור ומשכנתא</h2><p>מצב קיים והערכה לפי תאריך.</p></div>
         <button className="ghost" onClick={onRefresh}>רענון</button>
       </div>
       {error && <div className="error">{error}</div>}
@@ -2042,20 +2039,14 @@ function HousingForecastView({
       </section>
 
       <nav className="housing-subtabs" aria-label="תתי עמודים בדיור ומשכנתא">
-        {[['summary','סיכום'],['mortgage','משכנתאות'],['loan','הלוואות'],['other','התחייבויות נוספות']].map(([id,label]) => (
+        {[['summary','סיכום'],['mortgage','משכנתאות'],['loan','הלוואות'],['other','התחייבויות נוספות'],['forecast','תחזית']].map(([id,label]) => (
           <button key={id} className={housingSubTab === id ? 'housing-subtab active' : 'housing-subtab'} onClick={() => setHousingSubTab(id)}>{label}<span>{id==='summary' ? '' : ` ${grouped[id].length}`}</span></button>
         ))}
       </nav>
 
-      {housingSubTab === 'mortgage' && <>
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>🏠 משכנתאות</h3><p>כל מסלולי המשכנתא הקיימים במערכת.</p></div></div>{renderCommitmentCards('mortgage')}</section>
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📉 תחזית המשכנתאות</h3><p>התחזית מבוססת רק על הנתונים הקיימים.</p></div></div>{renderScenarioCards(grouped.mortgage)}</section>
-      </>}
+      {housingSubTab === 'mortgage' && <section className="housing-section-card"><div className="housing-section-head"><div><h3>🏠 משכנתאות</h3><p>כל מסלולי המשכנתא הקיימים במערכת, ממוינים לפי תאריך סיום.</p></div></div>{renderCommitmentCards('mortgage')}</section>}
 
-      {housingSubTab === 'loan' && <>
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>💳 הלוואות</h3><p>הלוואות שאינן מסלולי משכנתא.</p></div></div>{renderCommitmentCards('loan')}</section>
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📉 תחזית ההלוואות</h3><p>התחזית מוצגת בנפרד מהמשכנתאות.</p></div></div>{renderScenarioCards(grouped.loan)}</section>
-      </>}
+      {housingSubTab === 'loan' && <section className="housing-section-card"><div className="housing-section-head"><div><h3>💳 הלוואות</h3><p>כל ההלוואות הקיימות במערכת, ממוינות לפי תאריך סיום.</p></div></div>{renderCommitmentCards('loan')}</section>}
 
       {housingSubTab === 'other' && <section className="housing-section-card"><div className="housing-section-head"><div><h3>📌 התחייבויות נוספות</h3><p>התחייבויות שאינן מסווגות כמשכנתא או הלוואה.</p></div></div>{renderCommitmentCards('other')}</section>}
 
@@ -2068,40 +2059,37 @@ function HousingForecastView({
           <div className="housing-chart-wrap"><svg className="housing-chart" viewBox={`0 0 ${graph.width} ${graph.height}`} role="img" aria-label="גרף החזר חודשי צפוי">
             {[0, .25, .5, .75, 1].map((p) => { const yy = graph.pad.top + p * graph.plotH; const val = graph.max - p * (graph.max - graph.min); return <g key={p}><line className="housing-chart-grid" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={yy} y2={yy}/><text className="housing-chart-label" x={graph.pad.left-7} y={yy+4} textAnchor="end">{money(val)}</text></g>; })}
             <line className="housing-chart-axis" x1={graph.pad.left} x2={graph.width-graph.pad.right} y1={graph.height-graph.pad.bottom} y2={graph.height-graph.pad.bottom}/>
-            {graph.points.length > 1 && graph.points.slice(0, -1).map((point, idx) => {
-              const next = graph.points[idx + 1];
-              return <line key={`segment-${point.date}`} className="housing-chart-line" x1={point.x} y1={point.y} x2={next.x} y2={next.y} />;
-            })}
-            {graph.points.map((point, idx) => {
-              const cp = point.cp;
-              const isToday = idx === 0;
-              return <g key={point.date}>
-                <circle className={`housing-chart-point ${isToday ? "today" : "change"}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6}
-                  onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)}
-                  onClick={() => cp && setSelectedChange(cp.id)} />
-                <text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : new Date(`${point.date}T00:00:00`).getFullYear()}</text>
-              </g>;
-            })}
+            {graph.points.length > 1 && graph.points.slice(0, -1).map((point, idx) => { const next = graph.points[idx + 1]; return <line key={`segment-${point.date}`} className="housing-chart-line" x1={point.x} y1={point.y} x2={next.x} y2={next.y} />; })}
+            {graph.points.map((point, idx) => { const cp = point.cp; const isToday = idx === 0; return <g key={point.date}><circle className={`housing-chart-point ${isToday ? "today" : "change"}`} cx={point.x} cy={point.y} r={isToday ? 7 : 6} onMouseEnter={() => cp && setHoveredPoint(cp)} onMouseLeave={() => setHoveredPoint(null)} onClick={() => cp && setSelectedChange(cp.id)} /><text className="housing-chart-value" x={point.x} y={point.y-12} textAnchor="middle">{isToday ? "היום" : new Date(`${point.date}T00:00:00`).getFullYear()}</text></g>; })}
           </svg></div>
           <div className="housing-legend">כל נקודה בגרף מייצגת את היום או תאריך סיום של התחייבות. החישוב מבוסס על המצב הקיים בלבד: בכל תאריך סיום יורד ההחזר החודשי של ההתחייבות שהסתיימה. הזמן מתקדם מימין לשמאל.</div>
         </section>
+      </>}
 
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📅 השינויים הצפויים בהחזר</h3><p>רשימה כרונולוגית של נקודות שבהן התשלום משתנה או צפוי להשתנות.</p></div></div>{changePoints.length ? <div className="housing-changes">{changePoints.map((cp) => <div key={cp.id} className={`housing-change-card ${selectedChange === cp.id ? "selected" : ""}`} onClick={() => setSelectedChange(cp.id)}><div className="housing-change-top"><div className="housing-change-date">{dateText(`${cp.month}-01`)}</div><div className={`housing-change-delta ${cp.delta != null && cp.delta < 0 ? "down" : cp.delta > 0 ? "up" : ""}`}>{fmtDelta(cp.delta)}</div></div><div className="housing-change-grid"><div><span>לפני</span><strong>{cp.beforePayment == null ? "לא ידוע" : money(cp.beforePayment)}</strong></div><div><span>אחרי</span><strong>{cp.knownAfter ? money(cp.afterPayment) : "לא ניתן לחישוב"}</strong></div><div><span>סטטוס</span><strong>{cp.knownAfter ? "מחושב" : "צפוי שינוי"}</strong></div></div><div className="housing-change-reason">{cp.reason || "סיבה לא ידועה"}</div>{cp.commitments?.length > 0 && <div className="housing-change-commitments">{cp.commitments.map((x) => <span className="housing-change-chip" key={x.id}>{x.name}</span>)}</div>}</div>)}</div> : <div className="housing-empty">לא זוהו כרגע נקודות שינוי בטווח התחזית.</div>}</section>
-
-        <section className="housing-section-card"><div className="housing-section-head"><div><h3>📊 יתרות לפי תאריך</h3><p>בחרי תאריך וקבלי יתרות עתידיות לפי סוג התחייבות.</p></div></div><div className="housing-balance-grid"><div className="housing-balance-select"><label>תאריך יעד</label><select value={balanceTarget} onChange={(e) => setBalanceTarget(e.target.value)}>{targetOptions.map((m) => <option key={m} value={m}>{dateText(`${m}-01`)}</option>)}</select></div></div>{balanceAtTarget && <>
+      {housingSubTab === 'forecast' && <section className="housing-section-card housing-target-forecast">
+        <div className="housing-section-head">
+          <div><h3>🔮 תחזית</h3><p>בחרי תאריך וקבלי הערכה לפי המצב הקיים של כל מסלול.</p></div>
+        </div>
+        <div className="housing-balance-grid">
+          <div className="housing-balance-select">
+            <label>תאריך יעד</label>
+            <input type="date" value={balanceTarget ? `${balanceTarget}-01` : ""} onChange={(e) => setBalanceTarget(String(e.target.value || '').slice(0, 7))} />
+          </div>
+        </div>
+        {balanceAtTarget && <>
           <div className="housing-balance-cards" style={{marginTop:12}}>
-            {[['mortgage','יתרת משכנתאות בתאריך','mortgage'],['loan','יתרת הלוואות בתאריך','loan'],['other','יתרת התחייבויות נוספות','other'],['total','סה״כ יתרה בתאריך','total']].map(([key,label]) => <div key={key} className="housing-balance-card"><span>{label}</span><strong>{money(balanceAtTarget[key].value)}</strong></div>)}
+            <div className="housing-balance-card"><span>יתרת משכנתאות בתאריך</span><strong>{money(balanceAtTarget.mortgage.value)}</strong></div>
+            <div className="housing-balance-card"><span>יתרת הלוואות בתאריך</span><strong>{money(balanceAtTarget.loan.value)}</strong></div>
+            <div className="housing-balance-card"><span>סה״כ יתרה בתאריך</span><strong>{money(balanceAtTarget.total.value)}</strong></div>
           </div>
           <div className="housing-balance-cards" style={{marginTop:12}}>
             <div className="housing-balance-card"><span>החזר חודשי משוער · משכנתאות</span><strong>{money(balanceAtTarget.mortgagePayment)}</strong></div>
             <div className="housing-balance-card"><span>החזר חודשי משוער · הלוואות</span><strong>{money(balanceAtTarget.loanPayment)}</strong></div>
             <div className="housing-balance-card"><span>החזר חודשי משוער · סה״כ</span><strong>{money(balanceAtTarget.totalPayment)}</strong></div>
           </div>
-          <div className="housing-forecast-note" style={{marginTop:12}}><strong>איך מחושב?</strong> כל מסלול מחושב בנפרד לפי היתרה הנוכחית, ההחזר והריבית הנוכחיים ותאריך הסיום. שינויי ריבית עתידיים אינם משנים את החישוב.</div>
-        </>}</section>
-      </>}
-
-      <div className="housing-forecast-note"><strong>חשוב:</strong> התחזית היא לתצוגה בלבד. היא אינה יוצרת טרנזקציות, הוצאות או הכנסות ואינה משנה את התקציב או נתונים ב-Supabase. כאשר נתון עתידי חסר, המערכת מציגה במפורש שלא ניתן לחשב את הסכום.</div>
+          <div className="housing-forecast-note" style={{marginTop:12}}><strong>איך מחושב?</strong> כל מסלול מחושב בנפרד לפי היתרה הנוכחית, ההחזר והריבית הנוכחיים ותאריך הסיום. שינויי ריבית עתידיים אינם משנים את ההערכה.</div>
+        </>}
+      </section>}
     </section>
   );
 }
