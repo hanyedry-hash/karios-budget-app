@@ -26,6 +26,16 @@ const todayKey = (d = new Date()) =>
 const monthKey = (d = new Date()) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 
+const firstOfMonth = (dateValue) => {
+  const m = normalizeDateMonth(dateValue);
+  return m ? `${m}-01` : "";
+};
+
+const previousMonthFirst = (dateValue) => {
+  const m = normalizeDateMonth(dateValue);
+  return m ? `${shiftMonth(m, -1)}-01` : "";
+};
+
 const monthLabel = (m) => {
   const [y, mo] = m.split("-").map(Number);
   return new Date(y, mo - 1, 1).toLocaleDateString("he-IL", {
@@ -589,7 +599,12 @@ export default function BudgetApp() {
         t.data || []
       );
 
-      setTransactions(syncedIncome);
+      const syncedCreditInstallments = await syncScheduledCreditInstallments(
+        householdId,
+        syncedIncome
+      );
+
+      setTransactions(syncedCreditInstallments);
       setRecurring(r.data || []);
     } catch (e) {
       console.error(e);
@@ -691,6 +706,41 @@ export default function BudgetApp() {
         String(a.transaction_date || "")
       )
     );
+  }
+
+  async function syncScheduledCreditInstallments(householdId, currentRows) {
+    const rows = [...(currentRows || [])];
+    const today = todayKey();
+    const scheduled = rows.filter((t) =>
+      t?.kind === "expense" &&
+      t?.expense_type === "fixed" &&
+      t?.actual_amount === null &&
+      String(t?.note || "").startsWith("כרטיס אשראי · תשלום בפועל") &&
+      String(t?.transaction_date || "") <= today
+    );
+
+    for (const item of scheduled) {
+      const { data: updated, error } = await supabase
+        .from("transactions")
+        .update({
+          actual_amount: Number(item.planned_amount || 0),
+          completed: true,
+        })
+        .eq("id", item.id)
+        .eq("household_id", householdId)
+        .select("*")
+        .single();
+
+      if (error) {
+        console.error("לא ניתן לסמן תשלום אשראי עתידי כחויב", error);
+        continue;
+      }
+
+      const index = rows.findIndex((x) => x.id === item.id);
+      if (index >= 0) rows[index] = updated;
+    }
+
+    return rows;
   }
 
   async function signIn(e) {
@@ -984,7 +1034,7 @@ export default function BudgetApp() {
 
       const { data: existing, error: existingError } = await supabase
         .from("transactions")
-        .select("transaction_date,description,actual_amount,payment_method,credit_card_provider,credit_card_last4,merchant")
+        .select("transaction_date,description,actual_amount,planned_amount,payment_method,credit_card_provider,credit_card_last4,merchant,note")
         .eq("household_id", household.id);
       if (existingError) throw existingError;
 
@@ -992,22 +1042,19 @@ export default function BudgetApp() {
       const seen = new Set();
       const rows = parsed.rows.map((row, index) => {
         const suggestedCategory = guessCategoryId(row.description, categories);
-        const key = creditDuplicateKey({
-          transaction_date: row.date,
-          description: row.description,
-          actual_amount: row.amount,
-          payment_method: "credit_card",
-          credit_card_provider: row.provider,
-          credit_card_last4: row.last4,
-          merchant: row.merchant,
-        });
-        const duplicate = existingKeys.has(key) || seen.has(key);
-        seen.add(key);
+        const eventKeys = creditImportEventKeys(row).map((keyRow) => creditDuplicateKey(keyRow));
+        const missingEventIndexes = eventKeys
+          .map((key, eventIndex) => ({ key, eventIndex }))
+          .filter(({ key }) => !existingKeys.has(key) && !seen.has(key))
+          .map(({ eventIndex }) => eventIndex);
+        const duplicate = missingEventIndexes.length === 0;
+        eventKeys.forEach((key) => seen.add(key));
         return {
           ...row,
           id: `import-${index}-${Date.now()}`,
           selected: !duplicate && !row.ignored,
           duplicate,
+          missingEventIndexes,
           category_id: suggestedCategory,
           category_manual: false,
           status: row.ignored ? "ignored" : duplicate ? "duplicate" : "ready",
@@ -1032,27 +1079,14 @@ export default function BudgetApp() {
     setCreditImportError("");
     setCreditImportResult(null);
     try {
-      const rows = selected.map((r) => ({
-        household_id: household.id,
-        created_by: user?.id || null,
-        kind: "expense",
-        description: r.description,
-        category_id: r.category_id || null,
-        transaction_date: r.date,
-        planned_amount: r.amount,
-        completed: true,
-        actual_amount: r.amount,
-        expense_type: r.recurring ? "fixed" : "variable",
-        person_user_id: null,
-        note: r.recurring ? "יובא מכרטיס אשראי · עסקה חוזרת זוהתה" : "יובא מכרטיס אשראי",
-        payment_method: "credit_card",
-        merchant: r.merchant || r.description,
-        credit_card_last4: r.last4 || null,
-        credit_card_provider: r.provider || creditImportProvider || null,
+      const rows = selected.flatMap((r) => creditImportTransactionRows(r, {
+        householdId: household.id,
+        createdBy: user?.id || null,
+        fallbackProvider: creditImportProvider,
       }));
       const { error } = await supabase.from("transactions").insert(rows);
       if (error) throw error;
-      setCreditImportResult({ imported: rows.length, skipped: creditImportRows.length - rows.length });
+      setCreditImportResult({ imported: rows.length, sourceRows: selected.length, skipped: creditImportRows.length - selected.length });
       setCreditImportRows((prev) => prev.map((r) => r.selected && !r.ignored && !r.duplicate ? { ...r, selected: false, status: "imported" } : r));
       await refresh();
     } catch (e) {
@@ -1094,8 +1128,19 @@ export default function BudgetApp() {
     expenseTx.filter((t) => t.recurring_expense_id && t.recurring_month === month).map((t) => t.recurring_expense_id)
   );
   const pendingRecurring = recurring.filter((r) => !chargedRecurringIds.has(r.id));
-  const plannedFixed = recurring.reduce((s, r) => s + Number(r.planned_amount || 0), 0);
-  const pendingPlanned = pendingRecurring.reduce((s, r) => s + Number(r.planned_amount || 0), 0);
+  const scheduledCreditInstallments = transactions.filter(
+    (t) =>
+      t.kind === "expense" &&
+      t.expense_type === "fixed" &&
+      t.actual_amount === null &&
+      String(t.note || "").startsWith("כרטיס אשראי · תשלום מתוכנן")
+  );
+  const plannedFixed =
+    recurring.reduce((s, r) => s + Number(r.planned_amount || 0), 0) +
+    scheduledCreditInstallments.reduce((s, t) => s + Number(t.planned_amount || 0), 0);
+  const pendingPlanned =
+    pendingRecurring.reduce((s, r) => s + Number(r.planned_amount || 0), 0) +
+    scheduledCreditInstallments.reduce((s, t) => s + Number(t.planned_amount || 0), 0);
 
   const housingState = useMemo(
     () => calculateCurrentHousingState(housingCommitments),
@@ -1251,6 +1296,24 @@ export default function BudgetApp() {
             <Stat title="בפועל" value={money(fixedActual)} tone="negative" />
             <Stat title="ממתין" value={money(pendingPlanned)} />
           </div>
+          {scheduledCreditInstallments.length > 0 && (
+            <div className="fixed-list large" style={{ marginBottom: 14 }}>
+              {scheduledCreditInstallments.map((t) => (
+                <div className="fixed-card" key={t.id}>
+                  <div className="fixed-main">
+                    <strong>{t.description}</strong>
+                    <span>תשלום אשראי מתוכנן · חיוב בפועל {t.note?.match(/(\d{4}-\d{2}-\d{2})$/)?.[1] ? dateText(t.note.match(/(\d{4}-\d{2}-\d{2})$/)[1]) : "בהמשך"}</span>
+                  </div>
+                  <div className="amounts"><span>מתוכנן <b>{money(t.planned_amount)}</b></span><span>בפועל <b>—</b></span></div>
+                  <div className="row-actions">
+                    <span className="badge fixed">תשלום עתידי</span>
+                    <button className="icon" onClick={() => openTx(t, "expense")}>✎</button>
+                    <button className="icon danger" onClick={() => setConfirm({ type: "tx", item: t })}>×</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="fixed-list large">
             {recurring.map((r) => {
               const charged = chargedRecurringIds.has(r.id);
@@ -1502,6 +1565,7 @@ export default function BudgetApp() {
         .credit-import-table th, .credit-import-table td { padding: 10px; border-bottom: 1px solid rgba(0,0,0,.06); text-align: right; white-space: nowrap; }
         .credit-import-table th { background: #f7f8fc; }
         .credit-import-table select { min-width: 120px; }
+        .credit-import-table td small { display:block; margin-top:3px; color:#73798a; font-size:11px; }
         .duplicate-row { opacity: .55; background: #fff8f8; }
         .ignored-row { opacity: .45; }
         @media (max-width: 700px) {
@@ -2100,7 +2164,7 @@ function creditRowLooksRecurring(description, status) {
 
 function creditDuplicateKey(row) {
   const date = String(row.transaction_date || row.date || "");
-  const amount = Number(row.actual_amount ?? row.amount ?? 0).toFixed(2);
+  const amount = Number(row.actual_amount ?? row.planned_amount ?? row.amount ?? 0).toFixed(2);
   const provider = String(row.credit_card_provider ?? row.provider ?? "").toLowerCase();
   const last4 = String(row.credit_card_last4 ?? row.last4 ?? "").slice(-4);
   const merchant = String(row.merchant || row.description || "").trim().toLowerCase().replace(/\s+/g, " ");
@@ -2153,9 +2217,16 @@ function rowLooksLikeCreditTransaction(cells, cols) {
   return Boolean(description && rawDate && (amountCell || purchaseCell));
 }
 
+function creditRowLooksInstallment(status) {
+  const s = String(status || "").toLowerCase();
+  return /תשלומים|תשלום\s*\d+|installment|installments/.test(s);
+}
+
 function buildCreditRowFromColumns(cells, cols, provider, fileLast4 = "") {
   const rawDate = cols.dateCol >= 0 ? cells[cols.dateCol] : "";
   const date = parseCreditDate(rawDate);
+  const rawChargeDate = cols.chargeDateCol >= 0 ? cells[cols.chargeDateCol] : "";
+  const chargeDate = parseCreditDate(rawChargeDate);
   const description = cols.merchantCol >= 0 ? String(cells[cols.merchantCol] || "").trim() : "";
   const charge = cols.chargeCol >= 0 ? parseCreditAmount(cells[cols.chargeCol]) : null;
   const purchase = cols.purchaseCol >= 0 ? parseCreditAmount(cells[cols.purchaseCol]) : null;
@@ -2170,9 +2241,15 @@ function buildCreditRowFromColumns(cells, cols, provider, fileLast4 = "") {
       : /\bmax\b|מקס/.test(providerCell)
         ? "max"
         : provider;
+  const installment = creditRowLooksInstallment(status) && Boolean(chargeDate);
+  const budgetDate = installment ? previousMonthFirst(chargeDate) : date;
+  const actualChargeMonthDate = installment ? firstOfMonth(chargeDate) : date;
   const ignored = creditRowLooksIgnored(description, status) || !date || amount === null || amount <= 0;
   return {
     date,
+    budgetDate,
+    chargeDate,
+    actualChargeMonthDate,
     description,
     merchant: description,
     amount: amount === null ? 0 : Math.abs(amount),
@@ -2180,14 +2257,93 @@ function buildCreditRowFromColumns(cells, cols, provider, fileLast4 = "") {
     last4,
     sourceCategory: cols.categoryCol >= 0 ? String(cells[cols.categoryCol] || "").trim() : "",
     recurring: creditRowLooksRecurring(description, status),
+    installment,
+    status,
     ignored,
   };
 }
 
+function creditImportEventKeys(row) {
+  const base = {
+    description: row.description,
+    amount: row.amount,
+    payment_method: "credit_card",
+    credit_card_provider: row.provider,
+    credit_card_last4: row.last4,
+    merchant: row.merchant,
+  };
+  if (row.installment && row.chargeDate) {
+    return [
+      { ...base, transaction_date: row.budgetDate },
+      { ...base, transaction_date: row.actualChargeMonthDate },
+    ];
+  }
+  return [{ ...base, transaction_date: row.date }];
+}
+
+function creditImportTransactionRows(row, { householdId, createdBy, fallbackProvider }) {
+  const provider = row.provider || fallbackProvider || null;
+  const base = {
+    household_id: householdId,
+    created_by: createdBy,
+    kind: "expense",
+    description: row.description,
+    category_id: row.category_id || null,
+    planned_amount: row.amount,
+    expense_type: row.installment ? "fixed" : row.recurring ? "fixed" : "variable",
+    person_user_id: null,
+    payment_method: "credit_card",
+    merchant: row.merchant || row.description,
+    credit_card_last4: row.last4 || null,
+    credit_card_provider: provider,
+  };
+
+  if (!row.installment || !row.chargeDate) {
+    return [{
+      ...base,
+      transaction_date: row.date,
+      completed: true,
+      actual_amount: row.amount,
+      note: row.recurring ? "יובא מכרטיס אשראי · עסקה חוזרת זוהתה" : "יובא מכרטיס אשראי",
+    }];
+  }
+
+  const chargeMonth = firstOfMonth(row.chargeDate);
+  const chargeMonthAlreadyStarted = chargeMonth && chargeMonth <= todayKey();
+
+  const events = [
+    {
+      ...base,
+      transaction_date: row.budgetDate,
+      completed: false,
+      actual_amount: null,
+      note: `כרטיס אשראי · תשלום מתוכנן · חיוב בפועל ${row.chargeDate}`,
+    },
+    {
+      ...base,
+      transaction_date: row.actualChargeMonthDate,
+      completed: Boolean(chargeMonthAlreadyStarted),
+      actual_amount: chargeMonthAlreadyStarted ? row.amount : null,
+      note: `כרטיס אשראי · תשלום בפועל · תאריך חיוב ${row.chargeDate}`,
+    },
+  ];
+
+  const indexes = Array.isArray(row.missingEventIndexes) && row.missingEventIndexes.length
+    ? new Set(row.missingEventIndexes)
+    : new Set([0, 1]);
+  return events.filter((_event, index) => indexes.has(index));
+}
+
 function creditColumnsForDetailHeader(headers) {
-  // In the bank's multi-card export there are both "חיוב לתאריך" and "תאריך".
-  // The transaction date must be the actual purchase date ("תאריך"), not the
-  // future billing date ("חיוב לתאריך"). This is essential for monthly budgeting.
+  // Installment transactions contain both the purchase date ("תאריך") and the
+  // actual billing date ("חיוב לתאריך"). We keep both so the budget can show
+  // the planned installment in the month before billing and the actual charge
+  // on the first day of the billing month.
+  const chargeDateCol = creditHeaderIndex(
+    headers,
+    ["חיוב לתאריך", "billing date", "charge date"],
+    []
+  );
   const dateCol = creditHeaderIndex(
     headers,
     ["תאריך", "תאריך עסקה", "transaction date", "purchase date", "date"],
@@ -2216,7 +2372,7 @@ function creditColumnsForDetailHeader(headers) {
   );
   const providerCol = creditHeaderIndex(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"], []);
   const statusCol = creditHeaderIndex(headers, ["סטטוס", "status", "סוג עסקה", "transaction type", "תאור סוג עסקת אשראי", "תיאור סוג עסקת אשראי"], []);
-  return { dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol };
+  return { chargeDateCol, dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol };
 }
 
 function parseCreditMultiSectionCsv(matrix, fileName, provider) {
@@ -2252,6 +2408,7 @@ function parseCreditMultiSectionCsv(matrix, fileName, provider) {
 function parseCreditSingleTableCsv(matrix, fileName, provider) {
   if (!matrix.length) return [];
   const headers = matrix[0];
+  const chargeDateCol = creditHeaderIndex(headers, ["חיוב לתאריך", "billing date", "charge date"], []);
   const dateCol = creditHeaderIndex(headers, ["תאריך עסקה", "תאריך עסקה/חיוב", "תאריך", "transaction date", "purchase date", "date"], ["תאריך חיוב"]);
   const merchantCol = creditHeaderIndex(headers, ["שם בית העסק", "בית עסק", "שם העסק", "תיאור", "merchant", "description", "business name"], []);
   const chargeCol = creditHeaderIndex(headers, ["סכום חיוב", "סכום לחיוב", "חיוב", "charge amount", "charged amount", "amount charged", "debit"], []);
@@ -2260,7 +2417,7 @@ function parseCreditSingleTableCsv(matrix, fileName, provider) {
   const last4Col = creditHeaderIndex(headers, ["4 ספרות", "4 ספרות אחרונות", "מספר כרטיס", "כרטיס", "last 4", "last4", "card number"], []);
   const providerCol = creditHeaderIndex(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"], []);
   const statusCol = creditHeaderIndex(headers, ["סטטוס", "status", "סוג עסקה", "transaction type"], []);
-  const cols = { dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol };
+  const cols = { chargeDateCol, dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol };
   const fileLast4 = String(fileName).match(/(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/)?.[1] || "";
 
   if (dateCol < 0 || merchantCol < 0 || (chargeCol < 0 && purchaseCol < 0)) return [];
@@ -2321,7 +2478,7 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
 
       {loading && <div className="import-loading">קוראת את הקובץ / מייבאת נתונים…</div>}
       {error && <div className="error">{error}</div>}
-      {result && <div className="success-box">יובאו בהצלחה {result.imported} עסקאות. דולגו {result.skipped} שורות שלא נבחרו או שכבר קיימות.</div>}
+      {result && <div className="success-box">יובאו בהצלחה {result.sourceRows ?? result.imported} עסקאות מקור ({result.imported} רשומות תקציב). דולגו {result.skipped} שורות שלא נבחרו או שכבר קיימות.</div>}
 
       {rows.length > 0 && (
         <>
@@ -2343,12 +2500,12 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
                 {rows.map((r) => (
                   <tr key={r.id} className={r.duplicate ? "duplicate-row" : r.ignored ? "ignored-row" : ""}>
                     <td><input type="checkbox" checked={Boolean(r.selected)} disabled={r.duplicate || r.ignored || loading} onChange={(e) => updateRow(r.id, { selected: e.target.checked })} /></td>
-                    <td>{dateText(r.date)}</td>
+                    <td>{r.installment ? <><strong>{dateText(r.budgetDate)}</strong><small>חיוב בפועל: {dateText(r.chargeDate)}</small></> : dateText(r.date)}</td>
                     <td><strong>{r.description || "—"}</strong></td>
                     <td>{money(r.amount)}</td>
                     <td>{r.last4 ? `•••• ${r.last4}` : "—"}</td>
                     <td><select value={r.category_id || ""} onChange={(e) => updateRow(r.id, { category_id: e.target.value, category_manual: true })}><option value="">ללא קטגוריה</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
-                    <td>{r.duplicate ? "כפילות" : r.ignored ? "לא עסקה" : r.recurring ? "עסקה חוזרת" : "חדש"}</td>
+                    <td>{r.duplicate ? "כפילות" : r.ignored ? "לא עסקה" : r.installment ? "תשלומים" : r.recurring ? "עסקה חוזרת" : "חדש"}</td>
                   </tr>
                 ))}
               </tbody>
