@@ -886,7 +886,13 @@ export default function BudgetApp() {
         kind: "expense",
         description: item.name,
         category_id: item.category_id || null,
-        transaction_date: `${month}-${String(Math.min(Number(item.day_of_month) || 1, 28)).padStart(2, "0")}`,
+        transaction_date: (() => {
+          const [y, mo] = month.split("-").map(Number);
+          const lastDay = new Date(y, mo, 0).getDate();
+          const requestedDay = Number(item.day_of_month) || 1;
+          const day = Math.min(Math.max(requestedDay, 1), lastDay);
+          return `${month}-${String(day).padStart(2, "0")}`;
+        })(),
         planned_amount: Number(item.planned_amount || 0),
         completed: true,
         actual_amount: actual,
@@ -1972,7 +1978,7 @@ function normalizeCsvHeader(value) {
     .trim()
     .toLowerCase()
     .replace(/[\u0591-\u05C7]/g, "")
-    .replace(/[\s_\-./()]+/g, "");
+    .replace(/[\s_\-./()'"]+/g, "");
 }
 
 function detectCsvDelimiter(text) {
@@ -2053,9 +2059,9 @@ function parseCreditDate(value) {
 
 function detectCreditProvider(fileName, headers, text) {
   const hay = `${fileName} ${headers.join(" ")} ${String(text).slice(0, 3000)}`.toLowerCase();
-  if (hay.includes("ישראכרט") || hay.includes("isracard")) return "isracard";
-  if (hay.includes("כאל") || hay.includes("cal") || hay.includes("cardcal")) return "cal";
-  if (hay.includes("max")) return "max";
+  if (/ישראכרט|isracard/.test(hay)) return "isracard";
+  if (/כאל|cardcal|calcredit|cal-online|\bcal\b/.test(hay)) return "cal";
+  if (/\bmax\b|מקס/.test(hay)) return "max";
   return "other";
 }
 
@@ -2105,54 +2111,193 @@ function cardLast4(tx) {
   return tx.payment_method === "credit_card" && tx.credit_card_last4 ? String(tx.credit_card_last4).slice(-4) : "";
 }
 
+function creditHeaderIndex(headers, exactAliases = [], partialAliases = []) {
+  const normalized = headers.map(normalizeCsvHeader);
+  for (const alias of exactAliases) {
+    const wanted = normalizeCsvHeader(alias);
+    const idx = normalized.indexOf(wanted);
+    if (idx >= 0) return idx;
+  }
+  for (const alias of partialAliases) {
+    const wanted = normalizeCsvHeader(alias);
+    const idx = normalized.findIndex((h) => h && (h.includes(wanted) || wanted.includes(h)));
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+function isCreditDetailHeader(headers) {
+  const normalized = headers.map(normalizeCsvHeader).filter(Boolean);
+  const hasCard = normalized.some((h) => h === normalizeCsvHeader("שם כרטיס") || h.includes(normalizeCsvHeader("שם כרטיס")));
+  const hasMerchant = normalized.some((h) => h === normalizeCsvHeader("שם בית עסק") || h.includes(normalizeCsvHeader("שם בית עסק")));
+  const hasTransactionDate = normalized.some((h) => h === "תאריך" || h.includes("תאריךעסקה") || h.includes("transactiondate") || h.includes("purchasedate"));
+  const hasIlsCharge = normalized.some((h) => h.includes("סכוםחיובבשח") || h.includes("סכוםחיובשח") || h.includes("chargedamountils") || h.includes("chargeamountils") || h.includes("amountchargedils"));
+  return hasCard && hasMerchant && hasTransactionDate && hasIlsCharge;
+}
+
+function isCreditSectionBoundary(cells) {
+  const nonEmpty = cells.map((x) => String(x || "").trim()).filter(Boolean);
+  if (!nonEmpty.length) return false;
+  const joined = nonEmpty.join(" ").toLowerCase();
+  return nonEmpty.length <= 2 && (
+    /פירוט עבור הכרטיסים|רכישות בארץ|רכישות בחו|חיובים קרובים|מספר חשבון|cashback|סה.?כ חיובים/.test(joined)
+    || joined.startsWith("מספר חשבון")
+  );
+}
+
+function rowLooksLikeCreditTransaction(cells, cols) {
+  const rawDate = cols.dateCol >= 0 ? String(cells[cols.dateCol] || "").trim() : "";
+  const description = cols.merchantCol >= 0 ? String(cells[cols.merchantCol] || "").trim() : "";
+  const amountCell = cols.chargeCol >= 0 ? String(cells[cols.chargeCol] || "").trim() : "";
+  const purchaseCell = cols.purchaseCol >= 0 ? String(cells[cols.purchaseCol] || "").trim() : "";
+  return Boolean(description && rawDate && (amountCell || purchaseCell));
+}
+
+function buildCreditRowFromColumns(cells, cols, provider, fileLast4 = "") {
+  const rawDate = cols.dateCol >= 0 ? cells[cols.dateCol] : "";
+  const date = parseCreditDate(rawDate);
+  const description = cols.merchantCol >= 0 ? String(cells[cols.merchantCol] || "").trim() : "";
+  const charge = cols.chargeCol >= 0 ? parseCreditAmount(cells[cols.chargeCol]) : null;
+  const purchase = cols.purchaseCol >= 0 ? parseCreditAmount(cells[cols.purchaseCol]) : null;
+  const amount = charge !== null ? charge : purchase;
+  const status = cols.statusCol >= 0 ? String(cells[cols.statusCol] || "").trim() : "";
+  const last4 = (cols.last4Col >= 0 ? String(cells[cols.last4Col] || "") : "").replace(/\D/g, "").slice(-4) || fileLast4;
+  const providerCell = cols.providerCol >= 0 ? String(cells[cols.providerCol] || "").toLowerCase() : "";
+  const rowProvider = /ישראכרט|isracard/.test(providerCell)
+    ? "isracard"
+    : /כאל|cardcal|calcredit|cal-online|\bcal\b/.test(providerCell)
+      ? "cal"
+      : /\bmax\b|מקס/.test(providerCell)
+        ? "max"
+        : provider;
+  const ignored = creditRowLooksIgnored(description, status) || !date || amount === null || amount <= 0;
+  return {
+    date,
+    description,
+    merchant: description,
+    amount: amount === null ? 0 : Math.abs(amount),
+    provider: rowProvider,
+    last4,
+    sourceCategory: cols.categoryCol >= 0 ? String(cells[cols.categoryCol] || "").trim() : "",
+    recurring: creditRowLooksRecurring(description, status),
+    ignored,
+  };
+}
+
+function creditColumnsForDetailHeader(headers) {
+  // In the bank's multi-card export there are both "חיוב לתאריך" and "תאריך".
+  // The transaction date must be the actual purchase date ("תאריך"), not the
+  // future billing date ("חיוב לתאריך"). This is essential for monthly budgeting.
+  const dateCol = creditHeaderIndex(
+    headers,
+    ["תאריך", "תאריך עסקה", "transaction date", "purchase date", "date"],
+    ["תאריך עסקה/חיוב"]
+  );
+  const merchantCol = creditHeaderIndex(
+    headers,
+    ["שם בית עסק", "בית עסק", "שם העסק", "merchant", "business name", "תיאור", "description"],
+    []
+  );
+  const chargeCol = creditHeaderIndex(
+    headers,
+    ["סכום חיוב בש''ח", "סכום חיוב בשח", "סכום חיוב", "סכום לחיוב", "חיוב", "charge amount", "charged amount", "amount charged", "debit"],
+    []
+  );
+  const purchaseCol = creditHeaderIndex(
+    headers,
+    ["סכום קנייה", "סכום העסקה", "סכום עסקה", "purchase amount", "transaction amount", "amount"],
+    []
+  );
+  const categoryCol = creditHeaderIndex(headers, ["קטגוריה", "category"], []);
+  const last4Col = creditHeaderIndex(
+    headers,
+    ["4 ספרות", "4 ספרות אחרונות", "מספר כרטיס", "כרטיס", "last 4", "last4", "card number", "שם כרטיס"],
+    []
+  );
+  const providerCol = creditHeaderIndex(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"], []);
+  const statusCol = creditHeaderIndex(headers, ["סטטוס", "status", "סוג עסקה", "transaction type", "תאור סוג עסקת אשראי", "תיאור סוג עסקת אשראי"], []);
+  return { dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol };
+}
+
+function parseCreditMultiSectionCsv(matrix, fileName, provider) {
+  const rows = [];
+  const fileLast4 = String(fileName).match(/(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/)?.[1] || "";
+  let active = null;
+
+  for (let i = 0; i < matrix.length; i++) {
+    const cells = matrix[i] || [];
+    if (!cells.some((x) => String(x || "").trim())) continue;
+
+    if (isCreditDetailHeader(cells)) {
+      active = creditColumnsForDetailHeader(cells);
+      continue;
+    }
+
+    if (active && isCreditSectionBoundary(cells)) {
+      active = null;
+      continue;
+    }
+
+    if (!active || !rowLooksLikeCreditTransaction(cells, active)) continue;
+
+    const row = buildCreditRowFromColumns(cells, active, provider, fileLast4);
+    // A multi-card export can contain rows from several cards. Keep every
+    // card-specific row; the last four digits are read from the row itself.
+    if (row.description || row.date || row.amount) rows.push(row);
+  }
+
+  return rows;
+}
+
+function parseCreditSingleTableCsv(matrix, fileName, provider) {
+  if (!matrix.length) return [];
+  const headers = matrix[0];
+  const dateCol = creditHeaderIndex(headers, ["תאריך עסקה", "תאריך עסקה/חיוב", "תאריך", "transaction date", "purchase date", "date"], ["תאריך חיוב"]);
+  const merchantCol = creditHeaderIndex(headers, ["שם בית העסק", "בית עסק", "שם העסק", "תיאור", "merchant", "description", "business name"], []);
+  const chargeCol = creditHeaderIndex(headers, ["סכום חיוב", "סכום לחיוב", "חיוב", "charge amount", "charged amount", "amount charged", "debit"], []);
+  const purchaseCol = creditHeaderIndex(headers, ["סכום עסקה", "סכום העסקה", "purchase amount", "transaction amount", "amount"], []);
+  const categoryCol = creditHeaderIndex(headers, ["קטגוריה", "category"], []);
+  const last4Col = creditHeaderIndex(headers, ["4 ספרות", "4 ספרות אחרונות", "מספר כרטיס", "כרטיס", "last 4", "last4", "card number"], []);
+  const providerCol = creditHeaderIndex(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"], []);
+  const statusCol = creditHeaderIndex(headers, ["סטטוס", "status", "סוג עסקה", "transaction type"], []);
+  const cols = { dateCol, merchantCol, chargeCol, purchaseCol, categoryCol, last4Col, providerCol, statusCol };
+  const fileLast4 = String(fileName).match(/(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/)?.[1] || "";
+
+  if (dateCol < 0 || merchantCol < 0 || (chargeCol < 0 && purchaseCol < 0)) return [];
+
+  return matrix.slice(1)
+    .filter((cells) => rowLooksLikeCreditTransaction(cells, cols))
+    .map((cells) => buildCreditRowFromColumns(cells, cols, provider, fileLast4))
+    .filter((r) => r.description || r.date || r.amount);
+}
+
 function parseCreditCsv(text, fileName) {
   const delimiter = detectCsvDelimiter(text);
   const matrix = parseCsvMatrix(text, delimiter);
-  if (matrix.length < 2) return { provider: "other", rows: [] };
-  const headers = matrix[0];
-  const dateCol = csvColumn(headers, ["תאריך חיוב", "תאריך עסקה", "תאריך עסקה/חיוב", "תאריך", "transaction date", "purchase date", "date"]);
-  const merchantCol = csvColumn(headers, ["שם בית העסק", "בית עסק", "שם העסק", "תיאור", "merchant", "description", "business name"]);
-  const chargeCol = csvColumn(headers, ["סכום חיוב", "סכום לחיוב", "חיוב", "charge amount", "charged amount", "amount charged", "debit"]);
-  const purchaseCol = csvColumn(headers, ["סכום עסקה", "סכום העסקה", "purchase amount", "transaction amount", "amount"]);
-  const categoryCol = csvColumn(headers, ["קטגוריה", "category"]);
-  const last4Col = csvColumn(headers, ["4 ספרות", "4 ספרות אחרונות", "מספר כרטיס", "כרטיס", "last 4", "last4", "card number"]);
-  const providerCol = csvColumn(headers, ["חברת אשראי", "מנפיק", "issuer", "card provider", "provider"]);
-  const statusCol = csvColumn(headers, ["סטטוס", "status", "סוג עסקה", "transaction type"]);
-  const provider = detectCreditProvider(fileName, headers, text);
-  const fileLast4 = String(fileName).match(/(?:^|[^0-9])(\d{4})(?:[^0-9]|$)/)?.[1] || "";
+  if (matrix.length < 2) return { provider: "other", rows: [], format: "unknown" };
 
-  const rows = matrix.slice(1).map((cells) => {
-    const rawDate = dateCol >= 0 ? cells[dateCol] : "";
-    const date = parseCreditDate(rawDate);
-    const description = merchantCol >= 0 ? String(cells[merchantCol] || "").trim() : "";
-    const charge = chargeCol >= 0 ? parseCreditAmount(cells[chargeCol]) : null;
-    const purchase = purchaseCol >= 0 ? parseCreditAmount(cells[purchaseCol]) : null;
-    const amount = charge !== null ? charge : purchase;
-    const status = statusCol >= 0 ? String(cells[statusCol] || "").trim() : "";
-    const last4 = (last4Col >= 0 ? String(cells[last4Col] || "") : "").replace(/\D/g, "").slice(-4) || fileLast4;
-    const providerCell = providerCol >= 0 ? String(cells[providerCol] || "").toLowerCase() : "";
-    const rowProvider = providerCell.includes("ישראכרט") || providerCell.includes("isracard") ? "isracard" : providerCell.includes("כאל") || providerCell.includes("cal") ? "cal" : providerCell.includes("max") ? "max" : provider;
-    const ignored = creditRowLooksIgnored(description, status) || !date || amount === null || amount <= 0;
-    return {
-      date,
-      description,
-      merchant: description,
-      amount: amount === null ? 0 : Math.abs(amount),
-      provider: rowProvider,
-      last4,
-      sourceCategory: categoryCol >= 0 ? String(cells[categoryCol] || "").trim() : "",
-      recurring: creditRowLooksRecurring(description, status),
-      ignored,
-    };
-  }).filter((r) => r.description || r.date || r.amount);
+  // Detect the provider from the complete file, not only the first CSV row.
+  // This matters for bank exports whose first rows are report summaries.
+  const provider = detectCreditProvider(fileName, matrix.flat(), text);
 
-  return { provider, rows };
+  // First try the multi-section format used by bank exports. This format has
+  // several report sections and can contain transactions from multiple cards.
+  const multiRows = parseCreditMultiSectionCsv(matrix, fileName, provider);
+  if (multiRows.length) {
+    return { provider, rows: multiRows, format: "multi-card-bank-export" };
+  }
+
+  // Keep the existing single-table CSV support unchanged as the fallback for
+  // the credit-card files that already import successfully.
+  const singleRows = parseCreditSingleTableCsv(matrix, fileName, provider);
+  return { provider, rows: singleRows, format: singleRows.length ? "single-table" : "unknown" };
 }
 
 function CreditImportView({ rows, fileName, provider, loading, error, result, categories, onFile, onImport, onRows }) {
   const ready = rows.filter((r) => r.selected && !r.duplicate && !r.ignored).length;
   const duplicates = rows.filter((r) => r.duplicate).length;
   const ignored = rows.filter((r) => r.ignored).length;
+  const cards = [...new Set(rows.map((r) => r.last4).filter(Boolean))];
 
   function updateRow(id, patch) {
     onRows(rows.map((r) => r.id === id ? { ...r, ...patch } : r));
@@ -2165,13 +2310,13 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
   return (
     <section className="panel credit-import-panel">
       <div className="panel-head">
-        <div><h2>יבוא אשראי</h2><p>ייבוא עסקאות מישראכרט, כאל או MAX מתוך קובץ CSV</p></div>
+        <div><h2>יבוא אשראי</h2><p>ייבוא עסקאות מישראכרט, כאל, MAX וקבצי בנק רב־כרטיסיים מתוך CSV</p></div>
       </div>
 
       <div className="credit-import-box">
         <label className="file-picker">בחירת קובץ CSV<input type="file" accept=".csv,text/csv" onChange={(e) => onFile(e.target.files?.[0])} /></label>
         {fileName && <div className="import-file-name">קובץ: <strong>{fileName}</strong> · חברת אשראי: <strong>{providerLabel(provider)}</strong></div>}
-        <p className="muted">המערכת משתמשת ב־<strong>סכום חיוב</strong> כאשר הוא קיים, מזהה כפילויות לפי תאריך + בית עסק + סכום + כרטיס, ומציעה קטגוריה אוטומטית.</p>
+        <p className="muted">המערכת מזהה גם קבצי CSV מורכבים עם כמה כרטיסים באותו קובץ. בכל עסקה נשמרות 4 הספרות של הכרטיס המתאים. המערכת משתמשת ב־<strong>סכום חיוב</strong> כאשר הוא קיים, מזהה כפילויות לפי תאריך + בית עסק + סכום + כרטיס, ומציעה קטגוריה אוטומטית.</p>
       </div>
 
       {loading && <div className="import-loading">קוראת את הקובץ / מייבאת נתונים…</div>}
@@ -2185,6 +2330,7 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
             <span>חדשות לבחירה: <strong>{ready}</strong></span>
             <span>כפילויות: <strong>{duplicates}</strong></span>
             <span>שורות שאינן עסקאות: <strong>{ignored}</strong></span>
+            {cards.length > 1 && <span>כרטיסים שזוהו: <strong>{cards.length}</strong></span>}
           </div>
           <div className="import-actions">
             <label><input type="checkbox" checked={ready > 0 && ready === rows.filter((r) => !r.duplicate && !r.ignored).length} onChange={(e) => toggleAll(e.target.checked)} /> בחירת כל העסקאות החדשות</label>
