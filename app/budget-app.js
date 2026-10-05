@@ -1142,6 +1142,11 @@ export default function BudgetApp() {
     pendingRecurring.reduce((s, r) => s + Number(r.planned_amount || 0), 0) +
     scheduledCreditInstallments.reduce((s, t) => s + Number(t.planned_amount || 0), 0);
 
+  // יתרה לאחר חיוב כל ההוצאות הקבועות שטרם חויבו בחודש הנבחר.
+  // החישוב כולל גם הוצאות קבועות רגילות שממתינות לחיוב וגם
+  // תשלומי אשראי עתידיים שיובאו מהקובץ ועדיין לא חויבו בפועל.
+  const balanceAfterFixedCharges = actualIncome - actualExpenses - pendingPlanned;
+
   const housingState = useMemo(
     () => calculateCurrentHousingState(housingCommitments),
     [housingCommitments]
@@ -1232,6 +1237,7 @@ export default function BudgetApp() {
             <Stat title="הכנסות בפועל" value={money(actualIncome)} tone="positive" />
             <Stat title="הוצאות בפועל" value={money(actualExpenses)} tone="negative" />
             <Stat title="יתרה" value={money(actualIncome - actualExpenses)} tone={actualIncome - actualExpenses >= 0 ? "positive" : "negative"} />
+            <Stat title="יתרה לאחר חיוב קבועות" value={money(balanceAfterFixedCharges)} tone={balanceAfterFixedCharges >= 0 ? "positive" : "negative"} subtitle={pendingPlanned > 0 ? `${money(pendingPlanned)} טרם חויבו` : "כל הקבועות חויבו"} />
             <Stat title="קבועות מתוכננות" value={money(plannedFixed)} subtitle={`${pendingRecurring.length} ממתינות לחיוב`} />
           </section>
 
