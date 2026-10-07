@@ -1323,7 +1323,8 @@ export default function BudgetApp() {
           <div className="fixed-list large">
             {recurring.map((r) => {
               const charged = chargedRecurringIds.has(r.id);
-              const actual = expenseTx.find((t) => t.recurring_expense_id === r.id && t.recurring_month === month)?.actual_amount;
+              const actualTx = expenseTx.find((t) => t.recurring_expense_id === r.id && t.recurring_month === month);
+              const actual = actualTx?.actual_amount;
               return (
                 <div className="fixed-card" key={r.id}>
                   <div className="fixed-main">
@@ -1333,7 +1334,8 @@ export default function BudgetApp() {
                   <div className="amounts"><span>מתוכנן <b>{money(r.planned_amount)}</b></span><span>בפועל <b>{charged ? money(actual) : "—"}</b></span></div>
                   <div className="row-actions">
                     {charged ? <span className="badge success">חויבה</span> : <button className="small primary" onClick={() => chargeRecurring(r)}>סימון כחויבה</button>}
-                    <button className="icon" onClick={() => openRecurring(r)}>✎</button>
+                    {charged && actualTx ? <button className="small" onClick={() => openTx(actualTx, "expense")} title="עריכת הסכום בפועל">עריכת בפועל</button> : null}
+                    <button className="icon" onClick={() => openRecurring(r)} title="עריכת ההוצאה הקבועה">✎</button>
                     <button className="icon danger" onClick={() => setConfirm({ type: "recurring", item: r })}>×</button>
                   </div>
                 </div>
