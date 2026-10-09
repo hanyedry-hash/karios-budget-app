@@ -2191,41 +2191,43 @@ function creditDuplicateKey(row) {
 }
 
 function creditTransactionsMatch(candidate, saved) {
+  // Duplicate rule requested: same transaction date, amount, merchant and card last4.
+  // Installments may match either their planned-month date or actual billing-month date
+  // through candidate.matchDates, but all four identifying fields must match.
   const candidateDates = (Array.isArray(candidate.matchDates) && candidate.matchDates.length
     ? candidate.matchDates
     : [candidate.transaction_date || candidate.date])
-    .filter(Boolean).map((value) => String(value).slice(0, 10));
-  const savedDate = String(saved.transaction_date || saved.date || "").slice(0, 10);
-  if (!candidateDates.includes(savedDate)) return false;
+    .filter(Boolean)
+    .map((value) => normalizeCreditMatchDate(value));
+  const savedDate = normalizeCreditMatchDate(saved.transaction_date || saved.date);
+  if (!savedDate || !candidateDates.includes(savedDate)) return false;
 
-  const candidateAmount = Number(candidate.amount ?? candidate.actual_amount ?? candidate.planned_amount ?? 0);
+  const candidateAmount = Number(candidate.amount ?? candidate.actual_amount ?? candidate.planned_amount);
   const savedAmounts = [saved.actual_amount, saved.planned_amount, saved.amount]
     .filter((value) => value !== null && value !== undefined && value !== "")
-    .map(Number)
+    .map((value) => Number(String(value).replace(/,/g, "")))
     .filter(Number.isFinite);
-  if (!Number.isFinite(candidateAmount) || !savedAmounts.some((value) => Math.abs(candidateAmount - value) <= 0.009)) return false;
+  if (!Number.isFinite(candidateAmount) || !savedAmounts.some((value) => Math.abs(candidateAmount - value) < 0.01)) return false;
 
   const candidateMerchant = creditNormalizeMerchant(candidate.merchant || candidate.description);
   const savedMerchant = creditNormalizeMerchant(saved.merchant || saved.description);
   if (!candidateMerchant || !savedMerchant || candidateMerchant !== savedMerchant) return false;
 
-  // Missing card/provider metadata on a manually entered transaction should not
-  // prevent duplicate detection; when both sides have values, they must agree.
-  const candidateProvider = String(candidate.credit_card_provider ?? candidate.provider ?? "").trim().toLowerCase();
-  const savedProvider = String(saved.credit_card_provider ?? saved.provider ?? "").trim().toLowerCase();
-  // "other" means the CSV did not identify the issuer. Treat it as unknown,
-  // not as a real issuer mismatch; otherwise a transaction already imported
-  // from a recognized issuer can be imported again from the same bank export.
-  const isKnownProvider = (value) => Boolean(value && value !== "other");
-  if (
-    isKnownProvider(candidateProvider) &&
-    isKnownProvider(savedProvider) &&
-    candidateProvider !== savedProvider
-  ) return false;
   const candidateLast4 = String(candidate.credit_card_last4 ?? candidate.last4 ?? "").replace(/\D/g, "").slice(-4);
   const savedLast4 = String(saved.credit_card_last4 ?? saved.last4 ?? "").replace(/\D/g, "").slice(-4);
-  if (candidateLast4 && savedLast4 && candidateLast4 !== savedLast4) return false;
+  // Missing card number is not enough evidence to declare a duplicate.
+  if (!candidateLast4 || !savedLast4 || candidateLast4 !== savedLast4) return false;
   return true;
+}
+
+function normalizeCreditMatchDate(value) {
+  const s = String(value || "").trim();
+  if (!s) return "";
+  let m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+  m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return s.slice(0, 10);
 }
 
 function cardLast4(tx) {
