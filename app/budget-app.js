@@ -2213,7 +2213,15 @@ function creditTransactionsMatch(candidate, saved) {
   // prevent duplicate detection; when both sides have values, they must agree.
   const candidateProvider = String(candidate.credit_card_provider ?? candidate.provider ?? "").trim().toLowerCase();
   const savedProvider = String(saved.credit_card_provider ?? saved.provider ?? "").trim().toLowerCase();
-  if (candidateProvider && savedProvider && candidateProvider !== savedProvider) return false;
+  // "other" means the CSV did not identify the issuer. Treat it as unknown,
+  // not as a real issuer mismatch; otherwise a transaction already imported
+  // from a recognized issuer can be imported again from the same bank export.
+  const isKnownProvider = (value) => Boolean(value && value !== "other");
+  if (
+    isKnownProvider(candidateProvider) &&
+    isKnownProvider(savedProvider) &&
+    candidateProvider !== savedProvider
+  ) return false;
   const candidateLast4 = String(candidate.credit_card_last4 ?? candidate.last4 ?? "").replace(/\D/g, "").slice(-4);
   const savedLast4 = String(saved.credit_card_last4 ?? saved.last4 ?? "").replace(/\D/g, "").slice(-4);
   if (candidateLast4 && savedLast4 && candidateLast4 !== savedLast4) return false;
