@@ -1038,17 +1038,20 @@ export default function BudgetApp() {
         .eq("household_id", household.id);
       if (existingError) throw existingError;
 
-      const existingKeys = new Set((existing || []).map(creditDuplicateKey));
-      const seen = new Set();
+      const existingRows = existing || [];
+      const seenEvents = [];
       const rows = parsed.rows.map((row, index) => {
         const suggestedCategory = guessCategoryId(row.description, categories);
-        const eventKeys = creditImportEventKeys(row).map((keyRow) => creditDuplicateKey(keyRow));
+        const eventKeys = creditImportEventKeys(row);
         const missingEventIndexes = eventKeys
-          .map((key, eventIndex) => ({ key, eventIndex }))
-          .filter(({ key }) => !existingKeys.has(key) && !seen.has(key))
+          .map((candidate, eventIndex) => ({ candidate, eventIndex }))
+          .filter(({ candidate }) =>
+            !existingRows.some((saved) => creditTransactionsMatch(candidate, saved)) &&
+            !seenEvents.some((seen) => creditTransactionsMatch(candidate, seen))
+          )
           .map(({ eventIndex }) => eventIndex);
         const duplicate = missingEventIndexes.length === 0;
-        eventKeys.forEach((key) => seen.add(key));
+        seenEvents.push(...eventKeys);
         return {
           ...row,
           id: `import-${index}-${Date.now()}`,
@@ -2170,13 +2173,51 @@ function creditRowLooksRecurring(description, status) {
   return /הוראת קבע|עסקה מתמשכת|מנוי|חודשי|recurring|subscription|standing order|direct debit/.test(s);
 }
 
+function creditNormalizeMerchant(value) {
+  return String(value || "")
+    .normalize("NFKC")
+    .toLocaleLowerCase("he-IL")
+    .replace(/[\u0591-\u05C7]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
 function creditDuplicateKey(row) {
-  const date = String(row.transaction_date || row.date || "");
+  const date = String(row.transaction_date || row.date || "").slice(0, 10);
   const amount = Number(row.actual_amount ?? row.planned_amount ?? row.amount ?? 0).toFixed(2);
-  const provider = String(row.credit_card_provider ?? row.provider ?? "").toLowerCase();
-  const last4 = String(row.credit_card_last4 ?? row.last4 ?? "").slice(-4);
-  const merchant = String(row.merchant || row.description || "").trim().toLowerCase().replace(/\s+/g, " ");
+  const provider = String(row.credit_card_provider ?? row.provider ?? "").trim().toLowerCase();
+  const last4 = String(row.credit_card_last4 ?? row.last4 ?? "").replace(/\D/g, "").slice(-4);
+  const merchant = creditNormalizeMerchant(row.merchant || row.description || "");
   return [date, amount, provider, last4, merchant].join("|");
+}
+
+function creditTransactionsMatch(candidate, saved) {
+  const candidateDates = (Array.isArray(candidate.matchDates) && candidate.matchDates.length
+    ? candidate.matchDates
+    : [candidate.transaction_date || candidate.date])
+    .filter(Boolean).map((value) => String(value).slice(0, 10));
+  const savedDate = String(saved.transaction_date || saved.date || "").slice(0, 10);
+  if (!candidateDates.includes(savedDate)) return false;
+
+  const candidateAmount = Number(candidate.amount ?? candidate.actual_amount ?? candidate.planned_amount ?? 0);
+  const savedAmounts = [saved.actual_amount, saved.planned_amount, saved.amount]
+    .filter((value) => value !== null && value !== undefined && value !== "")
+    .map(Number)
+    .filter(Number.isFinite);
+  if (!Number.isFinite(candidateAmount) || !savedAmounts.some((value) => Math.abs(candidateAmount - value) <= 0.009)) return false;
+
+  const candidateMerchant = creditNormalizeMerchant(candidate.merchant || candidate.description);
+  const savedMerchant = creditNormalizeMerchant(saved.merchant || saved.description);
+  if (!candidateMerchant || !savedMerchant || candidateMerchant !== savedMerchant) return false;
+
+  // Missing card/provider metadata on a manually entered transaction should not
+  // prevent duplicate detection; when both sides have values, they must agree.
+  const candidateProvider = String(candidate.credit_card_provider ?? candidate.provider ?? "").trim().toLowerCase();
+  const savedProvider = String(saved.credit_card_provider ?? saved.provider ?? "").trim().toLowerCase();
+  if (candidateProvider && savedProvider && candidateProvider !== savedProvider) return false;
+  const candidateLast4 = String(candidate.credit_card_last4 ?? candidate.last4 ?? "").replace(/\D/g, "").slice(-4);
+  const savedLast4 = String(saved.credit_card_last4 ?? saved.last4 ?? "").replace(/\D/g, "").slice(-4);
+  if (candidateLast4 && savedLast4 && candidateLast4 !== savedLast4) return false;
+  return true;
 }
 
 function cardLast4(tx) {
@@ -2282,8 +2323,10 @@ function creditImportEventKeys(row) {
   };
   if (row.installment && row.chargeDate) {
     return [
-      { ...base, transaction_date: row.budgetDate },
-      { ...base, transaction_date: row.actualChargeMonthDate },
+      // Also check the original purchase date for compatibility with older
+      // imports/manual entries that were saved before installment splitting.
+      { ...base, transaction_date: row.budgetDate, matchDates: [row.budgetDate, row.date] },
+      { ...base, transaction_date: row.actualChargeMonthDate, matchDates: [row.actualChargeMonthDate] },
     ];
   }
   return [{ ...base, transaction_date: row.date }];
