@@ -1240,8 +1240,10 @@ export default function BudgetApp() {
             <Stat title="הכנסות בפועל" value={money(actualIncome)} tone="positive" />
             <Stat title="הוצאות בפועל" value={money(actualExpenses)} tone="negative" />
             <Stat title="יתרה" value={money(actualIncome - actualExpenses)} tone={actualIncome - actualExpenses >= 0 ? "positive" : "negative"} />
-            <Stat title="יתרה לאחר חיוב קבועות" value={money(balanceAfterFixedCharges)} tone={balanceAfterFixedCharges >= 0 ? "positive" : "negative"} subtitle={pendingPlanned > 0 ? `${money(pendingPlanned)} טרם חויבו` : "כל הקבועות חויבו"} />
+            <Stat title="יתרה לאחר חיוב קבועות" value={money(balanceAfterFixedCharges)} tone={balanceAfterFixedCharges >= 0 ? "positive" : "negative"} subtitle={pendingPlanned > 0 ? `${money(pendingPlanned)} יתרה לתשלום קבועות` : "כל הקבועות חויבו"} />
             <Stat title="קבועות מתוכננות" value={money(plannedFixed)} subtitle={`${pendingRecurring.length} ממתינות לחיוב`} />
+            <Stat title="קבועות ששולמו בפועל" value={money(fixedActual)} tone="positive" subtitle="סך החיובים הקבועים שבוצעו החודש" />
+            <Stat title="יתרה לתשלום קבועות" value={money(pendingPlanned)} tone={pendingPlanned > 0 ? "negative" : "positive"} subtitle={pendingPlanned > 0 ? "קבועות שטרם חויבו" : "אין קבועות ממתינות"} />
           </section>
 
           <div className="two-columns">
