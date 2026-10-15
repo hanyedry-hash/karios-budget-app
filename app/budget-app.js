@@ -503,6 +503,7 @@ export default function BudgetApp() {
   const [creditImportError, setCreditImportError] = useState("");
   const [creditImportLoading, setCreditImportLoading] = useState(false);
   const [creditImportResult, setCreditImportResult] = useState(null);
+  const [creditSkippedRows, setCreditSkippedRows] = useState([]);
 
   const [housingCommitments, setHousingCommitments] = useState([]);
   const [housingError, setHousingError] = useState("");
@@ -1024,25 +1025,62 @@ export default function BudgetApp() {
     setCreditImportFile(file.name || "");
     try {
       const buffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
       let text;
-      const utf8 = new TextDecoder("utf-8").decode(buffer);
-      text = utf8.includes("�") ? new TextDecoder("windows-1255").decode(buffer) : utf8;
+      // Detect common CSV encodings instead of assuming UTF-8/Windows-1255 only.
+      if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
+        text = new TextDecoder("utf-16le").decode(buffer.slice(2));
+      } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
+        text = new TextDecoder("utf-16be").decode(buffer.slice(2));
+      } else {
+        const utf8 = new TextDecoder("utf-8").decode(buffer);
+        text = utf8.includes("�") ? new TextDecoder("windows-1255").decode(buffer) : utf8;
+      }
       text = text.replace(/^\uFEFF/, "");
 
       const parsed = parseCreditCsv(text, file.name || "");
-      if (!parsed.rows.length) throw new Error("לא מצאתי עסקאות בקובץ. בדקי שזה קובץ CSV של חברת האשראי.");
+      if (!parsed.rows.length) throw new Error("לא מצאתי עסקאות בקובץ. בדקי שזה קובץ CSV של חברת האשראי ושהוא מכיל שורות עסקאות.");
 
-      const { data: existing, error: existingError } = await supabase
-        .from("transactions")
-        .select("transaction_date,description,actual_amount,planned_amount,payment_method,credit_card_provider,credit_card_last4,merchant,note")
-        .eq("household_id", household.id);
-      if (existingError) throw existingError;
+      // Supabase/PostgREST returns at most the configured page size by default.
+      // Fetch every page so duplicate detection does not silently miss older records
+      // when the household has more than 1,000 transactions or skip records.
+      async function fetchAllHouseholdRows(table, columns) {
+        const pageSize = 1000;
+        const all = [];
+        for (let from = 0; ; from += pageSize) {
+          const { data, error } = await supabase
+            .from(table)
+            .select(columns)
+            .eq("household_id", household.id)
+            .order("created_at", { ascending: true })
+            .order("id", { ascending: true })
+            .range(from, from + pageSize - 1);
+          if (error) throw error;
+          const page = data || [];
+          all.push(...page);
+          if (page.length < pageSize) break;
+        }
+        return all;
+      }
 
-      const existingRows = existing || [];
+      const [existingRows, skippedRows] = await Promise.all([
+        fetchAllHouseholdRows(
+          "transactions",
+          "transaction_date,description,actual_amount,planned_amount,payment_method,credit_card_provider,credit_card_last4,merchant,note"
+        ),
+        fetchAllHouseholdRows(
+          "credit_import_skips",
+          "id,signature,transaction_date,amount,merchant,last4,description"
+        ).catch((error) => {
+          throw new Error(`לא ניתן לטעון עסקאות שדילגת עליהן. ודאי שהרצת את קובץ ה-SQL המצורף ב-Supabase ושיש הרשאות לטבלה. פרטים: ${error.message}`);
+        }),
+      ]);
       const seenEvents = [];
       const rows = parsed.rows.map((row, index) => {
         const suggestedCategory = guessCategoryId(row.description, categories);
         const eventKeys = creditImportEventKeys(row);
+        const signature = creditImportSkipSignature(row);
+        const skippedMatch = skippedRows.find((saved) => saved.signature === signature);
         const missingEventIndexes = eventKeys
           .map((candidate, eventIndex) => ({ candidate, eventIndex }))
           .filter(({ candidate }) =>
@@ -1055,21 +1093,78 @@ export default function BudgetApp() {
         return {
           ...row,
           id: `import-${index}-${Date.now()}`,
-          selected: !duplicate && !row.ignored,
+          skipSignature: signature,
+          skippedId: skippedMatch?.id || null,
+          skipped: Boolean(skippedMatch),
+          selected: !duplicate && !row.ignored && !skippedMatch,
           duplicate,
           missingEventIndexes,
           category_id: suggestedCategory,
           category_manual: false,
-          status: row.ignored ? "ignored" : duplicate ? "duplicate" : "ready",
+          status: row.ignored ? "ignored" : duplicate ? "duplicate" : skippedMatch ? "skipped" : "ready",
         };
       });
 
+      setCreditSkippedRows(skippedRows);
       setCreditImportProvider(parsed.provider);
       setCreditImportRows(rows);
     } catch (e) {
       console.error(e);
       setCreditImportRows([]);
       setCreditImportError(e.message || "לא הצלחתי לקרוא את הקובץ.");
+    } finally {
+      setCreditImportLoading(false);
+    }
+  }
+
+  async function skipCreditImportRow(row) {
+    if (!household || !row?.skipSignature) return;
+    setCreditImportLoading(true);
+    setCreditImportError("");
+    try {
+      const payload = {
+        household_id: household.id,
+        signature: row.skipSignature,
+        transaction_date: row.date || row.budgetDate || null,
+        amount: Number(row.amount || 0),
+        merchant: row.merchant || row.description || "",
+        last4: String(row.last4 || "").replace(/\D/g, "").slice(-4),
+        description: row.description || "",
+        created_by: user?.id || null,
+      };
+      const { data, error } = await supabase
+        .from("credit_import_skips")
+        .upsert(payload, { onConflict: "household_id,signature" })
+        .select("id,signature,transaction_date,amount,merchant,last4,description")
+        .single();
+      if (error) throw error;
+      setCreditSkippedRows((prev) => [...prev.filter((item) => item.signature !== row.skipSignature), data]);
+      setCreditImportRows((prev) => prev.map((item) => item.id === row.id
+        ? { ...item, selected: false, skipped: true, skippedId: data.id, status: "skipped" }
+        : item));
+    } catch (e) {
+      console.error(e);
+      setCreditImportError(e.message || "לא ניתן לשמור את הדילוג.");
+    } finally {
+      setCreditImportLoading(false);
+    }
+  }
+
+  async function restoreCreditImportRow(row) {
+    if (!household || !row?.skippedId) return;
+    setCreditImportLoading(true);
+    setCreditImportError("");
+    try {
+      const { error } = await supabase.from("credit_import_skips").delete()
+        .eq("id", row.skippedId).eq("household_id", household.id);
+      if (error) throw error;
+      setCreditSkippedRows((prev) => prev.filter((item) => item.id !== row.skippedId));
+      setCreditImportRows((prev) => prev.map((item) => item.id === row.id
+        ? { ...item, selected: !item.duplicate && !item.ignored, skipped: false, skippedId: null, status: item.duplicate ? "duplicate" : item.ignored ? "ignored" : "ready" }
+        : item));
+    } catch (e) {
+      console.error(e);
+      setCreditImportError(e.message || "לא ניתן לבטל את הדילוג.");
     } finally {
       setCreditImportLoading(false);
     }
@@ -1366,9 +1461,12 @@ export default function BudgetApp() {
           loading={creditImportLoading}
           error={creditImportError}
           result={creditImportResult}
+          skippedRows={creditSkippedRows}
           categories={categories}
           onFile={prepareCreditImport}
           onImport={importSelectedCreditRows}
+          onSkip={skipCreditImportRow}
+          onRestore={restoreCreditImportRow}
           onRows={setCreditImportRows}
         />
       )}
@@ -1955,6 +2053,19 @@ function ExpensesView({ transactions, categoryMap, onOpen, filters, setFilters, 
     return [...map.values()].sort((a, b) => b.value - a.value);
   }, [filtered]);
 
+  // Category breakdown in the expenses tab follows the same active filters as the table.
+  const categorySummary = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((t) => {
+      const label = categoryMap[t.category_id] || "ללא קטגוריה";
+      map.set(label, (map.get(label) || 0) + Number(t.actual_amount || 0));
+    });
+    return [...map.entries()]
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [filtered, categoryMap]);
+
   const total = filtered.reduce((sum, t) => sum + Number(t.actual_amount || 0), 0);
 
   function toggleSort(key) {
@@ -2012,6 +2123,11 @@ function ExpensesView({ transactions, categoryMap, onOpen, filters, setFilters, 
       <div className="payment-summary">
         <div className="payment-summary-head"><div><h3>הוצאות לפי אמצעי תשלום וכרטיס</h3><p>כרטיסי אשראי מסוכמים לפי חברת האשראי ו־4 הספרות האחרונות</p></div><strong>{money(total)}</strong></div>
         {paymentSummary.length ? <Bars data={paymentSummary} /> : <Empty text="אין הוצאות שתואמות לסינון." />}
+      </div>
+
+      <div className="payment-summary category-summary">
+        <div className="payment-summary-head"><div><h3>הוצאות לפי קטגוריה</h3><p>הסכומים מתעדכנים בהתאם למסננים שבחרת בטבלת ההוצאות</p></div><strong>{money(total)}</strong></div>
+        {categorySummary.length ? <Bars data={categorySummary} /> : <Empty text="אין הוצאות שתואמות לסינון." />}
       </div>
 
       <div className="expenses-table-wrap">
@@ -2181,6 +2297,14 @@ function creditNormalizeMerchant(value) {
     .toLocaleLowerCase("he-IL")
     .replace(/[\u0591-\u05C7]/g, "")
     .replace(/[^\p{L}\p{N}]+/gu, "");
+}
+
+function creditImportSkipSignature(row) {
+  const date = normalizeCreditMatchDate(row.date || row.budgetDate || row.transaction_date || "");
+  const amount = Number(row.amount ?? row.actual_amount ?? row.planned_amount ?? 0).toFixed(2);
+  const merchant = creditNormalizeMerchant(row.merchant || row.description || "");
+  const last4 = String(row.last4 ?? row.credit_card_last4 ?? "").replace(/\D/g, "").slice(-4);
+  return [date, amount, merchant, last4].join("|");
 }
 
 function creditDuplicateKey(row) {
@@ -2371,8 +2495,9 @@ function creditImportTransactionRows(row, { householdId, createdBy, fallbackProv
     }];
   }
 
-  const chargeMonth = firstOfMonth(row.chargeDate);
-  const chargeMonthAlreadyStarted = chargeMonth && chargeMonth <= todayKey();
+  // A charge is completed only on/after its actual billing date, not merely
+  // because the billing month has started.
+  const chargeMonthAlreadyStarted = Boolean(row.chargeDate && row.chargeDate <= todayKey());
 
   const events = [
     {
@@ -2513,10 +2638,11 @@ function parseCreditCsv(text, fileName) {
   return { provider, rows: singleRows, format: singleRows.length ? "single-table" : "unknown" };
 }
 
-function CreditImportView({ rows, fileName, provider, loading, error, result, categories, onFile, onImport, onRows }) {
-  const ready = rows.filter((r) => r.selected && !r.duplicate && !r.ignored).length;
+function CreditImportView({ rows, fileName, provider, loading, error, result, skippedRows = [], categories, onFile, onImport, onSkip, onRestore, onRows }) {
+  const ready = rows.filter((r) => r.selected && !r.duplicate && !r.ignored && !r.skipped).length;
   const duplicates = rows.filter((r) => r.duplicate).length;
   const ignored = rows.filter((r) => r.ignored).length;
+  const skipped = rows.filter((r) => r.skipped).length;
   const cards = [...new Set(rows.map((r) => r.last4).filter(Boolean))];
 
   function updateRow(id, patch) {
@@ -2524,7 +2650,7 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
   }
 
   function toggleAll(checked) {
-    onRows(rows.map((r) => ({ ...r, selected: checked && !r.duplicate && !r.ignored })));
+    onRows(rows.map((r) => ({ ...r, selected: checked && !r.duplicate && !r.ignored && !r.skipped })));
   }
 
   return (
@@ -2550,10 +2676,11 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
             <span>חדשות לבחירה: <strong>{ready}</strong></span>
             <span>כפילויות: <strong>{duplicates}</strong></span>
             <span>שורות שאינן עסקאות: <strong>{ignored}</strong></span>
+            <span>דולגו בעבר: <strong>{skipped}</strong></span>
             {cards.length > 1 && <span>כרטיסים שזוהו: <strong>{cards.length}</strong></span>}
           </div>
           <div className="import-actions">
-            <label><input type="checkbox" checked={ready > 0 && ready === rows.filter((r) => !r.duplicate && !r.ignored).length} onChange={(e) => toggleAll(e.target.checked)} /> בחירת כל העסקאות החדשות</label>
+            <label><input type="checkbox" checked={ready > 0 && ready === rows.filter((r) => !r.duplicate && !r.ignored && !r.skipped).length} onChange={(e) => toggleAll(e.target.checked)} /> בחירת כל העסקאות החדשות</label>
             <button className="primary" disabled={!ready || loading} onClick={onImport}>ייבוא {ready} עסקאות</button>
           </div>
           <div className="credit-import-table-wrap">
@@ -2561,19 +2688,20 @@ function CreditImportView({ rows, fileName, provider, loading, error, result, ca
               <thead><tr><th>ייבוא</th><th>תאריך</th><th>בית עסק</th><th>סכום חיוב</th><th>כרטיס</th><th>קטגוריה</th><th>סימון</th></tr></thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id} className={r.duplicate ? "duplicate-row" : r.ignored ? "ignored-row" : ""}>
-                    <td><input type="checkbox" checked={Boolean(r.selected)} disabled={r.duplicate || r.ignored || loading} onChange={(e) => updateRow(r.id, { selected: e.target.checked })} /></td>
+                  <tr key={r.id} className={r.duplicate ? "duplicate-row" : r.ignored || r.skipped ? "ignored-row" : ""}>
+                    <td><input type="checkbox" checked={Boolean(r.selected)} disabled={r.duplicate || r.ignored || r.skipped || loading} onChange={(e) => updateRow(r.id, { selected: e.target.checked })} /></td>
                     <td>{r.installment ? <><strong>{dateText(r.budgetDate)}</strong><small>חיוב בפועל: {dateText(r.chargeDate)}</small></> : dateText(r.date)}</td>
                     <td><strong>{r.description || "—"}</strong></td>
                     <td>{money(r.amount)}</td>
                     <td>{r.last4 ? `•••• ${r.last4}` : "—"}</td>
                     <td><select value={r.category_id || ""} onChange={(e) => updateRow(r.id, { category_id: e.target.value, category_manual: true })}><option value="">ללא קטגוריה</option>{categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></td>
-                    <td>{r.duplicate ? "כפילות" : r.ignored ? "לא עסקה" : r.installment ? "תשלומים" : r.recurring ? "עסקה חוזרת" : "חדש"}</td>
+                    <td>{r.skipped ? <button className="secondary" disabled={loading} onClick={() => onRestore(r)}>החזרה לייבוא</button> : r.duplicate ? "כפילות" : r.ignored ? "לא עסקה" : <><span>{r.installment ? "תשלומים" : r.recurring ? "עסקה חוזרת" : "חדש"}</span>{!r.duplicate && !r.ignored && <button className="secondary" disabled={loading} style={{ marginInlineStart: 8 }} onClick={() => onSkip(r)}>דילוג קבוע</button>}</>}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {skippedRows.length > 0 && <div className="muted" style={{ marginTop: 12 }}>נשמרו {skippedRows.length} עסקאות לדילוג קבוע. כדי להחזיר עסקה לרשימה, בחרי שוב קובץ שמכיל אותה ולחצי על „החזרה לייבוא”.</div>}
         </>
       )}
     </section>
