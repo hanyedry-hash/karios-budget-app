@@ -470,6 +470,7 @@ export default function BudgetApp() {
   const [recurring, setRecurring] = useState([]);
   const [month, setMonth] = useState(monthKey());
   const [tab, setTab] = useState("dashboard");
+  const [summarySubTab, setSummarySubTab] = useState("general");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1240,6 +1241,25 @@ export default function BudgetApp() {
       .slice(0, 8);
   }, [expenseTx, categoryMap]);
 
+  const categoryChartForType = (expenseType) => {
+    const map = {};
+    expenseTx
+      .filter((t) => t.expense_type === expenseType)
+      .forEach((t) => {
+        const name = categoryMap[t.category_id] || "ללא קטגוריה";
+        map[name] = (map[name] || 0) + Number(t.actual_amount || 0);
+      });
+    return Object.entries(map)
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+  };
+  const fixedCategoryChart = categoryChartForType("fixed");
+  const variableCategoryChart = categoryChartForType("variable");
+  // כסף זמין למשתנות: הכנסה בפועל פחות הוצאות קבועות ששולמו וקבועות שטרם חויבו.
+  const variableStartingBalance = actualIncome - fixedActual - pendingPlanned;
+  const variableRemainingBalance = variableStartingBalance - variableActual;
+  const fixedRemainingBalance = actualIncome - fixedActual - variableActual - pendingPlanned;
+
   if (!user) {
     return (
       <main className="login-page" dir="rtl">
@@ -1299,6 +1319,12 @@ export default function BudgetApp() {
 
       {tab === "dashboard" && (
         <>
+          <div className="summary-subtabs" role="tablist" aria-label="ניתוח סיכום">
+            {[["general", "ניתוח כללי"], ["fixed-analysis", "ניתוח קבועות"], ["variable-analysis", "ניתוח משתנות"]].map(([id, label]) => (
+              <button key={id} role="tab" aria-selected={summarySubTab === id} className={summarySubTab === id ? "summary-subtab active" : "summary-subtab"} onClick={() => setSummarySubTab(id)}>{label}</button>
+            ))}
+          </div>
+          {summarySubTab === "general" && <>
           <div className="page-title">
             <div><h2>סיכום חודשי</h2><p>{monthLabel(month)}</p></div>
             <button className="primary" onClick={() => openTx()}>＋ הוצאה</button>
@@ -1350,6 +1376,35 @@ export default function BudgetApp() {
               {!transactions.length && <Empty text="אין תנועות בחודש הזה." />}
             </Panel>
           </div>
+          </>}
+
+          {summarySubTab === "fixed-analysis" && (
+            <>
+              <div className="page-title"><div><h2>ניתוח הוצאות קבועות</h2><p>{monthLabel(month)}</p></div></div>
+              <section className="cards">
+                <Stat title="הוצאות קבועות בפועל" value={money(fixedActual)} tone="negative" />
+                <Stat title="קבועות שטרם חויבו" value={money(pendingPlanned)} tone={pendingPlanned > 0 ? "negative" : "positive"} />
+                <Stat title="יתרה לאחר הוצאות וקבועות צפויות" value={money(fixedRemainingBalance)} tone={fixedRemainingBalance >= 0 ? "positive" : "negative"} />
+              </section>
+              <Panel title="הוצאות קבועות לפי קטגוריה">
+                {fixedCategoryChart.length ? <Bars data={fixedCategoryChart} /> : <Empty text="אין הוצאות קבועות בפועל בחודש הזה." />}
+              </Panel>
+            </>
+          )}
+
+          {summarySubTab === "variable-analysis" && (
+            <>
+              <div className="page-title"><div><h2>ניתוח הוצאות משתנות</h2><p>{monthLabel(month)}</p></div></div>
+              <section className="cards">
+                <Stat title="יתרה בתחילת המשתנות" value={money(variableStartingBalance)} tone={variableStartingBalance >= 0 ? "positive" : "negative"} subtitle="הכנסות בפועל פחות קבועות ששולמו וקבועות שטרם חויבו" />
+                <Stat title="הוצאות משתנות בפועל" value={money(variableActual)} tone="negative" />
+                <Stat title="יתרה למשתנות" value={money(variableRemainingBalance)} tone={variableRemainingBalance >= 0 ? "positive" : "negative"} />
+              </section>
+              <Panel title="הוצאות משתנות לפי קטגוריה">
+                {variableCategoryChart.length ? <Bars data={variableCategoryChart} /> : <Empty text="אין הוצאות משתנות בפועל בחודש הזה." />}
+              </Panel>
+            </>
+          )}
         </>
       )}
 
@@ -1598,6 +1653,10 @@ export default function BudgetApp() {
         .expense-filters label { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
         .expense-filters input, .expense-filters select { width: 100%; box-sizing: border-box; }
         .filter-actions { display: flex; align-items: end; }
+        .summary-subtabs { display:flex; gap:8px; overflow-x:auto; padding:4px; margin:0 0 16px; border:1px solid #e1e4ef; border-radius:14px; background:#f7f8fc; scrollbar-width:none; }
+        .summary-subtabs::-webkit-scrollbar { display:none; }
+        .summary-subtab { flex:0 0 auto; border:0; background:transparent; padding:11px 16px; border-radius:11px; font:inherit; font-weight:700; color:#697083; cursor:pointer; white-space:nowrap; }
+        .summary-subtab.active { background:#fff; color:#4c58dc; box-shadow:0 2px 10px rgba(30,35,70,.08); }
         .payment-summary { margin: 18px 0 22px; padding: 18px; border: 1px solid rgba(0,0,0,.08); border-radius: 16px; }
         .payment-summary-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
         .payment-summary-head h3 { margin: 0 0 4px; }
