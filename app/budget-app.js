@@ -1255,6 +1255,39 @@ export default function BudgetApp() {
   };
   const fixedCategoryChart = categoryChartForType("fixed");
   const variableCategoryChart = categoryChartForType("variable");
+
+  // ניתוח אשראי: הוצאות בחודש הנבחר עם אמצעי תשלום אשראי וסכום בפועל בלבד.
+  const creditCardExpenseTx = useMemo(
+    () => expenseTx.filter((t) => t.payment_method === "credit_card"),
+    [expenseTx]
+  );
+  const creditCardActual = creditCardExpenseTx.reduce((sum, t) => sum + Number(t.actual_amount || 0), 0);
+  const creditCardFixedActual = creditCardExpenseTx
+    .filter((t) => t.expense_type === "fixed")
+    .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0);
+  const creditCardVariableActual = creditCardExpenseTx
+    .filter((t) => t.expense_type === "variable")
+    .reduce((sum, t) => sum + Number(t.actual_amount || 0), 0);
+  const creditCardByCard = useMemo(() => {
+    const map = new Map();
+    creditCardExpenseTx.forEach((t) => {
+      const key = paymentGroupKey(t);
+      const current = map.get(key) || { label: paymentMethodLabel(t), value: 0 };
+      current.value += Number(t.actual_amount || 0);
+      map.set(key, current);
+    });
+    return [...map.values()].sort((a, b) => b.value - a.value);
+  }, [creditCardExpenseTx]);
+  const creditCardCategoryChart = useMemo(() => {
+    const map = {};
+    creditCardExpenseTx.forEach((t) => {
+      const name = categoryMap[t.category_id] || "ללא קטגוריה";
+      map[name] = (map[name] || 0) + Number(t.actual_amount || 0);
+    });
+    return Object.entries(map)
+      .map(([label, value]) => ({ label, value }))
+      .sort((a, b) => b.value - a.value);
+  }, [creditCardExpenseTx, categoryMap]);
   // כסף זמין למשתנות: הכנסה בפועל פחות הוצאות קבועות ששולמו וקבועות שטרם חויבו.
   const variableStartingBalance = actualIncome - fixedActual - pendingPlanned;
   const variableRemainingBalance = variableStartingBalance - variableActual;
@@ -1320,7 +1353,7 @@ export default function BudgetApp() {
       {tab === "dashboard" && (
         <>
           <div className="summary-subtabs" role="tablist" aria-label="ניתוח סיכום">
-            {[["general", "ניתוח כללי"], ["fixed-analysis", "ניתוח קבועות"], ["variable-analysis", "ניתוח משתנות"]].map(([id, label]) => (
+            {[["general", "ניתוח כללי"], ["fixed-analysis", "ניתוח קבועות"], ["variable-analysis", "ניתוח משתנות"], ["credit-analysis", "ניתוח אשראי"]].map(([id, label]) => (
               <button key={id} role="tab" aria-selected={summarySubTab === id} className={summarySubTab === id ? "summary-subtab active" : "summary-subtab"} onClick={() => setSummarySubTab(id)}>{label}</button>
             ))}
           </div>
@@ -1403,6 +1436,24 @@ export default function BudgetApp() {
               <Panel title="הוצאות משתנות לפי קטגוריה">
                 {variableCategoryChart.length ? <Bars data={variableCategoryChart} /> : <Empty text="אין הוצאות משתנות בפועל בחודש הזה." />}
               </Panel>
+            </>
+          )}
+          {summarySubTab === "credit-analysis" && (
+            <>
+              <div className="page-title"><div><h2>ניתוח הוצאות אשראי</h2><p>{monthLabel(month)} · הוצאות אשראי עם סכום בפועל בלבד</p></div></div>
+              <section className="cards">
+                <Stat title="סה״כ הוצאות אשראי מעודכנות" value={money(creditCardActual)} tone="negative" subtitle={`${creditCardExpenseTx.length} הוצאות`} />
+                <Stat title="הוצאות אשראי קבועות" value={money(creditCardFixedActual)} tone="negative" />
+                <Stat title="הוצאות אשראי משתנות" value={money(creditCardVariableActual)} tone="negative" />
+              </section>
+              <div className="two-columns">
+                <Panel title="הוצאות לפי כרטיס אשראי">
+                  {creditCardByCard.length ? <Bars data={creditCardByCard} /> : <Empty text="אין הוצאות אשראי מעודכנות בחודש הזה." />}
+                </Panel>
+                <Panel title="הוצאות אשראי לפי קטגוריה">
+                  {creditCardCategoryChart.length ? <Bars data={creditCardCategoryChart} /> : <Empty text="אין הוצאות אשראי מעודכנות בחודש הזה." />}
+                </Panel>
+              </div>
             </>
           )}
         </>
