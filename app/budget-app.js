@@ -1025,56 +1025,29 @@ export default function BudgetApp() {
     setCreditImportFile(file.name || "");
     try {
       const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
       let text;
-      // Detect common CSV encodings instead of assuming UTF-8/Windows-1255 only.
-      if (bytes.length >= 2 && bytes[0] === 0xff && bytes[1] === 0xfe) {
-        text = new TextDecoder("utf-16le").decode(buffer.slice(2));
-      } else if (bytes.length >= 2 && bytes[0] === 0xfe && bytes[1] === 0xff) {
-        text = new TextDecoder("utf-16be").decode(buffer.slice(2));
-      } else {
-        const utf8 = new TextDecoder("utf-8").decode(buffer);
-        text = utf8.includes("�") ? new TextDecoder("windows-1255").decode(buffer) : utf8;
-      }
+      const utf8 = new TextDecoder("utf-8").decode(buffer);
+      text = utf8.includes("�") ? new TextDecoder("windows-1255").decode(buffer) : utf8;
       text = text.replace(/^\uFEFF/, "");
 
       const parsed = parseCreditCsv(text, file.name || "");
-      if (!parsed.rows.length) throw new Error("לא מצאתי עסקאות בקובץ. בדקי שזה קובץ CSV של חברת האשראי ושהוא מכיל שורות עסקאות.");
+      if (!parsed.rows.length) throw new Error("לא מצאתי עסקאות בקובץ. בדקי שזה קובץ CSV של חברת האשראי.");
 
-      // Supabase/PostgREST returns at most the configured page size by default.
-      // Fetch every page so duplicate detection does not silently miss older records
-      // when the household has more than 1,000 transactions or skip records.
-      async function fetchAllHouseholdRows(table, columns) {
-        const pageSize = 1000;
-        const all = [];
-        for (let from = 0; ; from += pageSize) {
-          const { data, error } = await supabase
-            .from(table)
-            .select(columns)
-            .eq("household_id", household.id)
-            .order("created_at", { ascending: true })
-            .order("id", { ascending: true })
-            .range(from, from + pageSize - 1);
-          if (error) throw error;
-          const page = data || [];
-          all.push(...page);
-          if (page.length < pageSize) break;
-        }
-        return all;
-      }
-
-      const [existingRows, skippedRows] = await Promise.all([
-        fetchAllHouseholdRows(
-          "transactions",
-          "transaction_date,description,actual_amount,planned_amount,payment_method,credit_card_provider,credit_card_last4,merchant,note"
-        ),
-        fetchAllHouseholdRows(
-          "credit_import_skips",
-          "id,signature,transaction_date,amount,merchant,last4,description"
-        ).catch((error) => {
-          throw new Error(`לא ניתן לטעון עסקאות שדילגת עליהן. ודאי שהרצת את קובץ ה-SQL המצורף ב-Supabase ושיש הרשאות לטבלה. פרטים: ${error.message}`);
-        }),
+      const [{ data: existing, error: existingError }, { data: skipped, error: skippedError }] = await Promise.all([
+        supabase
+          .from("transactions")
+          .select("transaction_date,description,actual_amount,planned_amount,payment_method,credit_card_provider,credit_card_last4,merchant,note")
+          .eq("household_id", household.id),
+        supabase
+          .from("credit_import_skips")
+          .select("id,signature,transaction_date,amount,merchant,last4,description")
+          .eq("household_id", household.id),
       ]);
+      if (existingError) throw existingError;
+      if (skippedError) throw new Error(`לא ניתן לטעון עסקאות שדילגת עליהן. ודאי שהרצת את קובץ ה-SQL המצורף ב-Supabase. פרטים: ${skippedError.message}`);
+
+      const existingRows = existing || [];
+      const skippedRows = skipped || [];
       const seenEvents = [];
       const rows = parsed.rows.map((row, index) => {
         const suggestedCategory = guessCategoryId(row.description, categories);
@@ -2495,9 +2468,8 @@ function creditImportTransactionRows(row, { householdId, createdBy, fallbackProv
     }];
   }
 
-  // A charge is completed only on/after its actual billing date, not merely
-  // because the billing month has started.
-  const chargeMonthAlreadyStarted = Boolean(row.chargeDate && row.chargeDate <= todayKey());
+  const chargeMonth = firstOfMonth(row.chargeDate);
+  const chargeMonthAlreadyStarted = chargeMonth && chargeMonth <= todayKey();
 
   const events = [
     {
